@@ -20,6 +20,7 @@ from obsiforge.utils.platform import (
     get_brew_path,
     get_platform,
 )
+from obsiforge.utils.prompt import confirm
 
 console = Console()
 
@@ -60,8 +61,6 @@ def _confirm_install(tool: str, non_interactive: bool) -> bool:
     """
     if non_interactive:
         return True
-    from obsiforge.utils.prompt import confirm
-
     return confirm(f"  Install {tool}?", default=True)
 
 
@@ -134,18 +133,18 @@ def install_node(non_interactive: bool = False, dry_run: bool = False) -> bool:
         non_interactive=non_interactive, dry_run=dry_run
     ):
         # fnm install failed, try direct install
-            if plat == "macos" and get_brew_path():
-                return _run_cmd([str(get_brew_path()), "install", "node"], "Node.js via Homebrew")
-            if plat == "linux":
-                pkg_mgr = detect_package_manager()
-                if pkg_mgr == "apt":
-                    return _run_cmd(
-                        ["sudo", "apt-get", "install", "-y", "nodejs"],
-                        "Node.js via apt",
-                    )
-            console.print("  [yellow]⚠[/yellow] Could not install Node.js automatically.")
-            console.print("  Install manually: https://nodejs.org/")
-            return False
+        if plat == "macos" and get_brew_path():
+            return _run_cmd([str(get_brew_path()), "install", "node"], "Node.js via Homebrew")
+        if plat == "linux":
+            pkg_mgr = detect_package_manager()
+            if pkg_mgr == "apt":
+                return _run_cmd(
+                    ["sudo", "apt-get", "install", "-y", "nodejs"],
+                    "Node.js via apt",
+                )
+        console.print("  [yellow]⚠[/yellow] Could not install Node.js automatically.")
+        console.print("  Install manually: https://nodejs.org/")
+        return False
 
     # fnm is available, install Node.js LTS via fnm
     fnm_path = find_executable("fnm")

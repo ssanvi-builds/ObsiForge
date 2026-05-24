@@ -41,14 +41,14 @@ def _write_mcp_json(
 
     if dry_run:
         print_dry_run(f"Would write {mcp_file}")
-        from obsiforge.utils.settings_merge import _mask_sensitive
+        from obsiforge.utils.settings_merge import mask_sensitive
         masked = {
             "mcpServers": {
                 server_name: {
                     "type": mcp_config["mcpServers"][server_name]["type"],
                     "url": mcp_config["mcpServers"][server_name]["url"],
                     "headers": {
-                        "Authorization": f"Bearer {_mask_sensitive(bearer_token)}",
+                        "Authorization": f"Bearer {mask_sensitive(bearer_token)}",
                     },
                 },
             }
@@ -126,7 +126,6 @@ def run(
     mcp_http_port: int | None = None,
     bearer_token: str | None = None,
     api_key: str | None = None,
-    skip_semantic: bool = False,
 ) -> dict[str, Any]:
     """Create .mcp.json and merge into global settings.
 

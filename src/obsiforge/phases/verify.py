@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import socket
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +10,9 @@ import httpx
 from rich.console import Console
 from rich.table import Table
 
+from obsiforge.utils.obsidian import check_port_in_use
 from obsiforge.utils.platform import get_claude_config_dir
+from obsiforge.utils.ports import CLAUDE_MEM_WORKER_PORT
 from obsiforge.utils.prompt import print_step, print_success, print_warning
 
 console = Console()
@@ -20,29 +21,22 @@ console = Console()
 def _check_claude_mem_worker() -> dict[str, Any]:
     """Check if claude-mem worker is running."""
     try:
-        resp = httpx.get("http://localhost:37701/health", timeout=5)
+        resp = httpx.get(f"http://localhost:{CLAUDE_MEM_WORKER_PORT}/health", timeout=5)
         if resp.status_code == 200:
             return {"status": "running", "details": "worker healthy"}
     except (httpx.ConnectError, httpx.TimeoutException):
         pass
-    return {"status": "stopped", "details": "worker not responding on port 37701"}
+    return {"status": "stopped", "details": f"worker not responding on port {CLAUDE_MEM_WORKER_PORT}"}
 
 
 def _check_mcp_http(port: int) -> dict[str, Any]:
     """Check if MCP Connector HTTP server is responding on a port."""
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2)
-        result = sock.connect_ex(("127.0.0.1", port))
-        sock.close()
-        if result == 0:
-            return {"status": "running", "details": f"port {port} is open"}
-        return {
-            "status": "stopped",
-            "details": f"port {port} is not responding (Obsidian not running?)",
-        }
-    except OSError as e:
-        return {"status": "error", "details": str(e)}
+    if check_port_in_use(port):
+        return {"status": "running", "details": f"port {port} is open"}
+    return {
+        "status": "stopped",
+        "details": f"port {port} is not responding (Obsidian not running?)",
+    }
 
 
 def _check_rest_api(port: int, api_key: str) -> dict[str, Any]:

@@ -10,8 +10,10 @@ from pathlib import Path
 # Default port ranges for ObsiForge components
 REST_API_BASE = 27124  # Local REST API ports start here
 MCP_HTTP_BASE = 27200  # MCP Connector HTTP ports start here
-MCP_HTTP_MAX = 27205  # MCP Connector only supports ports 27200-27205
-CLAUDE_MEM_WORKER_BASE = 37700  # claude-mem worker ports start here
+MCP_HTTP_MAX = 27210  # MCP Connector port range upper bound
+MCP_HTTP_RANGE = (27200, 27210)  # MCP Connector port range
+REST_API_RANGE = (27100, 27199)  # Local REST API port range
+CLAUDE_MEM_WORKER_PORT = 37701  # claude-mem worker default port
 
 
 def is_port_available(port: int, host: str = "127.0.0.1") -> bool:
@@ -82,36 +84,6 @@ def find_available_port(
             return port
     msg = f"No available port found in range {base}-{base + max_tries - 1}"
     raise RuntimeError(msg)
-
-
-def get_used_ports() -> dict[int, str]:
-    """Get a map of used ports to their processes.
-
-    Uses lsof on macOS/Linux. Falls back to netstat on other platforms.
-
-    Returns:
-        Dict mapping port number to process name.
-    """
-    ports: dict[int, str] = {}
-    try:
-        result = subprocess.run(
-            ["lsof", "-iTCP", "-sTCP:LISTEN", "-P", "-n"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        for line in result.stdout.splitlines()[1:]:  # skip header
-            parts = line.split()
-            if len(parts) >= 9:
-                try:
-                    addr = parts[8]  # e.g. "*:27124" or "127.0.0.1:27201"
-                    port = int(addr.rsplit(":", 1)[-1])
-                    ports[port] = parts[0]  # process name
-                except (ValueError, IndexError):
-                    continue
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-    return ports
 
 
 def allocate_ports(vault_name: str) -> dict[str, int]:

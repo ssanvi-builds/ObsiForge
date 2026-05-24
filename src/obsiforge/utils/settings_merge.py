@@ -50,11 +50,15 @@ def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]
     return result
 
 
-def _mask_sensitive(value: str) -> str:
+def mask_sensitive(value: str) -> str:
     """Mask sensitive values for display. Shows first 8 + last 4 chars."""
     if len(value) <= 12:
         return value[:4] + "..." + value[-4:]
     return value[:8] + "..." + value[-4:]
+
+
+# Backward compatibility alias — remove after vault.py migrates
+_mask_sensitive = mask_sensitive
 
 
 def atomic_write_json(path: Path, data: dict[str, Any], backup: bool = True) -> None:
@@ -168,7 +172,7 @@ def _format_value(value: Any) -> str:
     """Format a value for display, masking sensitive strings."""
     if isinstance(value, str) and len(value) > 20:
         # Likely a token/key — mask it
-        return _mask_sensitive(value)
+        return mask_sensitive(value)
     if isinstance(value, dict):
         return f"({len(value)} keys)"
     if isinstance(value, list):

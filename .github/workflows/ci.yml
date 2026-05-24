@@ -29,7 +29,7 @@ jobs:
         with:
           node-version: "22"
       - run: uv sync --extra dev --python ${{ matrix.python-version }}
-      - run: uv run pytest tests/test_smoke.py -v
+      - run: uv run pytest tests/ -v --ignore=tests/test_bm25.py
 
   test-macos:
     runs-on: macos-latest
@@ -44,7 +44,7 @@ jobs:
         with:
           node-version: "22"
       - run: uv sync --extra dev --python ${{ matrix.python-version }}
-      - run: uv run pytest tests/test_smoke.py -v
+      - run: uv run pytest tests/ -v --ignore=tests/test_bm25.py
 
   test-windows:
     runs-on: windows-latest
@@ -59,4 +59,4 @@ jobs:
         with:
           node-version: "22"
       - run: uv sync --extra dev --python ${{ matrix.python-version }}
-      - run: uv run pytest tests/test_smoke.py -v
+      - run: uv run pytest tests/ -v --ignore=tests/test_bm25.py

@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import json
-import socket
-import subprocess
+import re
 from pathlib import Path
 from typing import Any
 
@@ -12,113 +11,16 @@ import httpx
 from rich.console import Console
 from rich.panel import Panel
 
+from obsiforge.utils.obsidian import (
+    check_port_in_use,
+    find_obsidian_listening_ports,
+    is_obsidian_running,
+)
 from obsiforge.utils.platform import get_claude_config_dir
+from obsiforge.utils.ports import CLAUDE_MEM_WORKER_PORT, MCP_HTTP_MAX, MCP_HTTP_RANGE, REST_API_RANGE
 from obsiforge.utils.prompt import print_error, print_success, print_warning
 
 console = Console()
-
-
-def _check_obsidian_running() -> dict[str, Any]:
-    """Check if Obsidian is running (cross-platform)."""
-    from obsiforge.utils.platform import get_platform
-
-    plat = get_platform()
-    try:
-        if plat == "windows":
-            result = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq Obsidian.exe"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if "Obsidian.exe" in result.stdout:
-                return {"running": True, "pids": []}
-        else:
-            flag = "-x" if plat == "macos" else "-f"
-            name = "Obsidian" if plat == "macos" else "obsidian"
-            result = subprocess.run(
-                ["pgrep", flag, name],
-                capture_output=True, text=True, timeout=5,
-            )
-            if result.returncode == 0:
-                return {"running": True, "pids": result.stdout.strip().split("\n")}
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-    return {"running": False, "pids": []}
-
-
-def _check_port_in_use(port: int) -> dict[str, Any]:
-    """Check if a specific port is in use."""
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2)
-        result = sock.connect_ex(("127.0.0.1", port))
-        sock.close()
-        return {"in_use": result == 0}
-    except OSError:
-        return {"in_use": False}
-
-
-def _find_obsidian_listening_ports() -> list[int]:
-    """Find ports that the Obsidian process is listening on."""
-    from obsiforge.utils.platform import get_platform
-
-    plat = get_platform()
-    ports: list[int] = []
-    try:
-        if plat == "macos":
-            result = subprocess.run(
-                ["lsof", "-i", "-P", "-n"],
-                capture_output=True, text=True, timeout=10,
-            )
-            import re
-            # Match lines like: Obsidian 95252 ssanvi 26u IPv4 ... TCP localhost:27200 (LISTEN)
-            for line in result.stdout.splitlines():
-                if "Obsidian" not in line or "LISTEN" not in line:
-                    continue
-                match = re.search(r"(?:localhost|\*|127\.0\.0\.1):(\d+)", line)
-                if match:
-                    ports.append(int(match.group(1)))
-        elif plat == "linux":
-            result = subprocess.run(
-                ["ss", "-tlnp"],
-                capture_output=True, text=True, timeout=10,
-            )
-            import re
-            for line in result.stdout.splitlines():
-                if "obsidian" not in line.lower():
-                    continue
-                match = re.search(r"(?:127\.0\.0\.1|\*):(\d+)", line)
-                if match:
-                    ports.append(int(match.group(1)))
-        elif plat == "windows":
-            # Find Obsidian PIDs first
-            pid_result = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq Obsidian.exe", "/FO", "CSV", "/NH"],
-                capture_output=True, text=True, timeout=5,
-            )
-            obsidian_pids: set[str] = set()
-            for line in pid_result.stdout.splitlines():
-                if "Obsidian" in line:
-                    parts = line.strip('"').split('","')
-                    if len(parts) >= 2:
-                        obsidian_pids.add(parts[1])
-            if obsidian_pids:
-                result = subprocess.run(
-                    ["netstat", "-ano"],
-                    capture_output=True, text=True, timeout=10,
-                )
-                import re
-                for line in result.stdout.splitlines():
-                    if "LISTENING" not in line:
-                        continue
-                    pid = line.strip().split()[-1]
-                    if pid not in obsidian_pids:
-                        continue
-                    match = re.search(r"(?:127\.0\.0\.1|0\.0\.0\.0):(\d+)", line)
-                    if match:
-                        ports.append(int(match.group(1)))
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-    return sorted(set(ports))
 
 
 def _check_mcp_auth(vault_path: str, bearer_token: str, mcp_port: int) -> dict[str, Any]:
@@ -332,7 +234,7 @@ def run_doctor(
 
     # 1. Obsidian running?
     console.rule("[bold]Obsidian[/bold]")
-    obs_check = _check_obsidian_running()
+    obs_check = is_obsidian_running()
     if obs_check["running"]:
         print_success(f"Obsidian is running (PID {obs_check['pids'][0]})")
     else:
@@ -395,17 +297,17 @@ def run_doctor(
 
             # MCP Connector port
             obsidian_running = obs_check["running"]
-            mcp_check = _check_port_in_use(mcp_port)
+            mcp_check = {"in_use": check_port_in_use(mcp_port)}
 
             # If expected port doesn't respond, try to discover actual port
             actual_mcp_port: int | None = mcp_port
             if not mcp_check["in_use"] and obsidian_running:
-                real_ports = _find_obsidian_listening_ports()
-                # MCP Connector typically uses ports in the 27200-27210 range
-                mcp_candidates = [p for p in real_ports if 27200 <= p <= 27210]
+                real_ports = find_obsidian_listening_ports()
+                mcp_low, mcp_high = MCP_HTTP_RANGE
+                mcp_candidates = [p for p in real_ports if mcp_low <= p <= mcp_high]
                 if mcp_candidates:
                     actual_mcp_port = mcp_candidates[0]
-                    mcp_check = _check_port_in_use(actual_mcp_port)
+                    mcp_check = {"in_use": check_port_in_use(actual_mcp_port)}
 
             if mcp_check["in_use"]:
                 port_label = str(actual_mcp_port)
@@ -439,15 +341,15 @@ def run_doctor(
             checks.append(("MCP Connector", mcp_check))
 
             # REST API
-            rest_check = _check_port_in_use(rest_port)
+            rest_check = {"in_use": check_port_in_use(rest_port)}
             actual_rest_port: int | None = rest_port
             if not rest_check["in_use"] and obsidian_running:
-                real_ports = _find_obsidian_listening_ports()
-                # Local REST API typically uses ports in the 27100-27199 range
-                rest_candidates = [p for p in real_ports if 27100 <= p <= 27199]
+                real_ports = find_obsidian_listening_ports()
+                rest_low, rest_high = REST_API_RANGE
+                rest_candidates = [p for p in real_ports if rest_low <= p <= rest_high]
                 if rest_candidates:
                     actual_rest_port = rest_candidates[0]
-                    rest_check = _check_port_in_use(actual_rest_port)
+                    rest_check = {"in_use": check_port_in_use(actual_rest_port)}
 
             if rest_check["in_use"]:
                 port_label = str(actual_rest_port)
@@ -471,14 +373,14 @@ def run_doctor(
     console.rule("[bold]claude-mem[/bold]")
     claude_mem_ok = False
     try:
-        resp = httpx.get("http://localhost:37701/health", timeout=5)
+        resp = httpx.get(f"http://localhost:{CLAUDE_MEM_WORKER_PORT}/health", timeout=5)
         if resp.status_code == 200:
             print_success("claude-mem worker: healthy")
             claude_mem_ok = True
         else:
             print_warning(f"claude-mem worker: unexpected status {resp.status_code}")
     except (httpx.ConnectError, httpx.TimeoutException):
-        print_error("claude-mem worker: not responding on port 37701")
+        print_error(f"claude-mem worker: not responding on port {CLAUDE_MEM_WORKER_PORT}")
         console.print(
             "[dim]  Fix: Run 'npx claude-mem start' or "
             "restart your Claude Code session[/dim]"

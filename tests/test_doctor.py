@@ -4,43 +4,44 @@ import json
 from unittest.mock import MagicMock, patch
 
 from obsiforge.doctor import (
-    _check_obsidian_running,
     _check_plugins_enabled,
-    _check_port_in_use,
     _check_settings_json,
     _check_vault_files,
     _check_workspace_json,
 )
+from obsiforge.utils.obsidian import (
+    check_port_in_use,
+    is_obsidian_running,
+)
 
 
-class TestCheckObsidianRunning:
-    """Tests for _check_obsidian_running."""
+class TestIsObsidianRunning:
+    """Tests for is_obsidian_running."""
 
     def test_obsidian_running(self):
-        with patch("obsiforge.doctor.subprocess.run") as mock_run:
+        with patch("obsiforge.utils.obsidian.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="12345\n")
-            result = _check_obsidian_running()
+            result = is_obsidian_running()
             assert result["running"] is True
             assert "12345" in result["pids"]
 
     def test_obsidian_not_running(self):
-        with patch("obsiforge.doctor.subprocess.run") as mock_run:
+        with patch("obsiforge.utils.obsidian.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=1, stdout="")
-            result = _check_obsidian_running()
+            result = is_obsidian_running()
             assert result["running"] is False
 
 
 class TestCheckPortInUse:
-    """Tests for _check_port_in_use."""
+    """Tests for check_port_in_use."""
 
     def test_port_available(self):
-        with patch("obsiforge.doctor.socket.socket") as mock_socket_cls:
+        with patch("obsiforge.utils.obsidian.socket.socket") as mock_socket_cls:
             mock_sock = MagicMock()
             mock_sock.connect_ex.return_value = 1  # Connection refused
             mock_socket_cls.return_value.__enter__ = MagicMock(return_value=mock_sock)
             mock_socket_cls.return_value.__exit__ = MagicMock(return_value=False)
-            result = _check_port_in_use(9999)
-            assert result["in_use"] is False
+            assert check_port_in_use(9999) is False
 
 
 class TestCheckPluginsEnabled:

@@ -50,18 +50,6 @@ def get_obsidian_config_dir() -> Path:
     return Path.home() / ".config" / "obsidian"
 
 
-def get_obsidian_vaults_dir() -> Path:
-    """Return the default Obsidian vaults directory.
-
-    On macOS: ~/obsidian-vaults/
-    On Linux: ~/obsidian-vaults/
-    On Windows: %USERPROFILE%/obsidian-vaults/
-
-    Users can override this during setup.
-    """
-    return Path.home() / "obsidian-vaults"
-
-
 def find_executable(name: str) -> Path | None:
     """Find an executable on PATH.
 
@@ -128,11 +116,6 @@ def get_obsidian_path() -> Path | None:
             if candidate.exists():
                 return candidate
     return None
-
-
-def expand_path(path: str) -> Path:
-    """Expand ~ and environment variables in a path string."""
-    return Path(os.path.expandvars(os.path.expanduser(path)))
 
 
 def get_claude_mem_path() -> Path | None:

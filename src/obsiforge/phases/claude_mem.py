@@ -10,6 +10,7 @@ from typing import Any
 from rich.console import Console
 
 from obsiforge.utils.platform import get_claude_config_dir, get_claude_mem_path
+from obsiforge.utils.ports import CLAUDE_MEM_WORKER_PORT
 from obsiforge.utils.prompt import (
     print_dry_run,
     print_error,
@@ -149,15 +150,12 @@ def run(
     # Step 3: Merge into settings.json
     print_step("Configuring settings.json")
 
-    # Read existing settings or create new
-    json.loads(settings_path.read_text()) if settings_path.exists() else {}
-
     # Build the merge data
     mem_server_path = mem_path or Path(
         "~/.claude/plugins/marketplaces/thedotmack/plugin/scripts/mcp-server.cjs"
     )
 
-    mem_worker_port = 37701  # Default port
+    mem_worker_port = CLAUDE_MEM_WORKER_PORT
 
     merge_data: dict[str, Any] = {
         "env": {

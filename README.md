@@ -1,6 +1,10 @@
 # ObsiForge
 
-**One command. Three layers. Infinite memory.**
+[![X](https://img.shields.io/badge/@ssanvi_builds-000000?logo=x&style=for-the-badge)](https://x.com/ssanvi_builds)
+
+**One command + 2 clicks. Three layers. Infinite memory.**
+
+> claude code · obsidian · mcp server · semantic search · ai memory · knowledge management · developer tools · llm integration
 
 > Built with [Claude Code](https://claude.ai/code). Human-directed, AI-implemented.
 
@@ -10,11 +14,11 @@ ObsiForge sets up the complete Claude Code + Obsidian + Memory integration in a 
 obsiforge init --name work --path ~/obsidian-vaults/work
 ```
 
-That's it. You get:
+Then enable 2 plugins in Obsidian Settings. That's it. You get:
 
 1. **claude-mem** — Session memory: "how did we fix X bug last time?"
-2. **Obsidian vault** — Project knowledge: architecture, decisions, preferences
-3. **Semantic search** — Find notes by meaning, not just exact words
+2. **Obsidian vault + semantic search** — Project knowledge, searchable by meaning
+3. **Native memory** — Pointer only, keeps Claude focused
 
 ---
 
@@ -27,7 +31,8 @@ uv tool install git+https://github.com/ssanvi-builds/ObsiForge
 # Set up your vault (auto-installs missing prerequisites)
 obsiforge init --name work --path ~/obsidian-vaults/work --auto-install
 
-# Open vault in Obsidian → Settings → Community plugins → Enable both plugins
+# Enable community plugins in Obsidian:
+# Settings → Community plugins → Turn on → Enable both plugins
 # Then:
 cd ~/obsidian-vaults/work && claude
 ```
@@ -43,6 +48,7 @@ cd ~/obsidian-vaults/work && claude
 - Configure REST API ports by hand
 - Set up claude-mem hooks in `settings.json`
 - Debug MCP connection failures alone
+- Re-do everything when tokens expire or plugins update
 - 45+ minutes of fragile manual setup
 
 ### After ObsiForge
@@ -142,7 +148,7 @@ Each layer has a different purpose. **Never duplicate knowledge across layers.**
 │  Lifecycle: Automatic — hooks capture every session             │
 │  Example: "Tried approach X, failed, approach Y worked"       │
 ├──────────────────────────────────────────────────────────────────┤
-│  Layer 2: Obsidian vault                                        │
+│  Layer 2: Obsidian vault + semantic search                      │
 │  What: Project knowledge — decisions, preferences, architecture  │
 │  Where: Claude/ folder in vault                                │
 │  How to search: search_vault_smart (semantic) or                │
@@ -160,7 +166,21 @@ Each layer has a different purpose. **Never duplicate knowledge across layers.**
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**The rule:** If it helps a *future* session understand the project better → Layer 2. If it's only about *this* session → Layer 1. Layer 3 is just a signpost.
+**The rule:** If it helps a *future* session understand the project better → Layer 2. If it's only about *this* session → Layer 1. Layer 3 is just a signpost, never store knowledge there.
+
+### Multi-Vault Support
+
+Each vault gets its own ports, MCP config, and memory. Zero collisions.
+
+```bash
+obsiforge init --name prism --path ~/obsidian-vaults/prism
+obsiforge init --name atalaya --path ~/obsidian-vaults/atalaya
+
+obsiforge doctor --vault prism
+obsiforge doctor --vault atalaya
+```
+
+Ports are auto-allocated and tracked in `~/.claude/obsiforge-state.json` to prevent collisions.
 
 ### Semantic Search
 
@@ -215,13 +235,14 @@ obsiforge doctor --fix        # Attempt auto-repair
 obsiforge doctor --vault work # Check specific vault
 ```
 
-Checks:
-- Obsidian process running
+Checks (9 total):
+- Obsidian process running (cross-platform: pgrep/tasklist)
 - Global `settings.json` structure (mcpServers, hooks, env)
-- Vault files present (CLAUDE.md, MEMORY.md, .mcp.json, plugins)
-- Community plugins enabled (mcp-tools, local-rest-api)
+- Vault files present (CLAUDE.md, MEMORY.md, user-preferences.md, .mcp.json, plugins)
+- Workspace.json exists
+- Community plugins enabled (2/2)
 - MCP Connector responding + auth
-- REST API responding
+- REST API responding (detects actual port if different from expected)
 - claude-mem worker healthy
 
 ### `obsiforge status`
@@ -241,9 +262,10 @@ obsiforge doctor --fix        # Attempt auto-repair
 ```
 
 Common fixes:
-- **Obsidian not running** → Open your vault in Obsidian
-- **Plugins not enabled** → Settings → Community plugins → Enable both plugins
+- **Obsidian not running** → `obsiforge init` will auto-launch Obsidian (quit-modify-launch strategy)
+- **Plugins not enabled** → Settings → Community plugins → Turn on → Enable both plugins (Obsidian security requirement)
 - **MCP auth failed** → Bearer token changed; run `obsiforge init` again or update `.mcp.json`
+- **MCP auth failed on non-active vault** → Expected: Obsidian runs one vault at a time. Switch vaults in Obsidian and re-check.
 - **claude-mem worker down** → Run `npx claude-mem start` or restart Claude Code
 - **Plugin download 403** → Run `gh auth login` first, or set `GITHUB_TOKEN`
 
@@ -311,7 +333,15 @@ obsiforge/
 │   │   ├── platform.py           # Cross-platform path + pkg manager detection
 │   │   └── prompt.py             # Rich console helpers
 ├── tests/
-│   └── test_smoke.py             # Smoke tests (CLI, imports, live vault)
+│   ├── conftest.py              # Shared fixtures (mock Obsidian interactions)
+│   ├── test_cli.py              # CLI argument parsing
+│   ├── test_crypto.py           # API key + bearer token generation
+│   ├── test_doctor.py           # Health check logic
+│   ├── test_integration.py      # End-to-end vault init
+│   ├── test_ports.py            # Port allocation + collision prevention
+│   ├── test_settings_merge.py   # Safe JSON merge
+│   ├── test_smoke.py            # Smoke tests (CLI, imports, live vault)
+│   └── test_state.py            # Phase completion tracking
 ├── pyproject.toml
 └── README.md
 ```
@@ -326,8 +356,12 @@ obsiforge/
 - [x] Auto-install prerequisites (`--auto-install` / `-a`)
 - [x] Port collision prevention across vaults
 - [x] GitHub token auth for plugin downloads
+- [x] Reliable vault opening (quit-modify-launch strategy)
+- [x] MCP Connector port discovery (actual port, not allocated)
+- [x] Multi-vault doctor with `--vault` selection
+- [x] Dark theme default (appearance.json)
 - [ ] Auto-repair mode (`--fix` actually fixes things)
-- [ ] Multi-vault management improvements
+- [ ] Test isolation (state file shared with pytest)
 - [ ] Obsidian plugin marketplace integration
 
 ## Contributing
