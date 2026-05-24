@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import questionary
 from rich.console import Console
 
@@ -91,7 +89,7 @@ def print_error(message: str) -> None:
 
 def print_info(message: str) -> None:
     """Print an info message."""
-    console.print(f"  [dim]ℹ[/dim] {message}")
+    console.print(f"  [dim]i[/dim] {message}")
 
 
 def print_dry_run(message: str) -> None:

@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
-
-import re
 
 from obsiforge.utils.crypto import generate_api_key, generate_bearer_token
 from obsiforge.utils.plugin_downloader import download_all_plugins
 from obsiforge.utils.ports import allocate_ports
-from obsiforge.utils.settings_merge import _mask_sensitive
 from obsiforge.utils.prompt import (
     print_dry_run,
     print_error,
@@ -22,6 +21,7 @@ from obsiforge.utils.prompt import (
     print_success,
     print_warning,
 )
+from obsiforge.utils.settings_merge import _mask_sensitive
 
 console = Console()
 
@@ -99,7 +99,8 @@ def _write_skills(vault_name: str, vault_path: Path, dry_run: bool = False) -> N
     # Dashboard skill
     dashboard_template = """---
 name: dashboard
-description: Load project context from the Obsidian vault at session start. Gives a briefing of current state, progress, and what to work on next.
+description: Load project context from the Obsidian vault at session start.
+  Gives a briefing of current state, progress, and what to work on next.
 ---
 
 # Dashboard: Session Start Briefing
@@ -150,7 +151,8 @@ Run quick health checks:
     # Consolidate skill
     consolidate = """---
 name: consolidate
-description: Distill recent claude-mem session observations into the Obsidian vault. Run at session end or on demand to keep vault knowledge current.
+description: Distill recent claude-mem session observations into the Obsidian vault.
+  Run at session end or on demand to keep vault knowledge current.
 ---
 
 # Consolidate: claude-mem → Vault
@@ -179,11 +181,13 @@ Search claude-mem for recent observations using the claude-mem MCP search tool.
 | New discoveries | Tool usage patterns |
 | Decisions with rationale | Temporary workarounds |
 
-**Rule**: If it helps a FUTURE session understand the project better → vault. If only about THIS session → claude-mem.
+**Rule**: If it helps a FUTURE session understand the project
+better -> vault. If only about THIS session -> claude-mem.
 
 ### Step 3: Update Vault Notes
 
-Use `create_vault_file` or `patch_vault_file` to write to the `Claude/` folder. Update existing notes rather than creating new ones.
+Use `create_vault_file` or `patch_vault_file` to write to the
+`Claude/` folder. Update existing notes rather than creating new ones.
 
 ### Step 4: Verify
 
@@ -235,7 +239,9 @@ def _write_community_plugins(vault_path: Path, dry_run: bool = False) -> None:
             print_success(f"Created {plugins_file} ({len(REQUIRED_PLUGINS)} plugins)")
 
 
-def _write_rest_api_config(vault_path: Path, port: int, api_key: str, dry_run: bool = False) -> None:
+def _write_rest_api_config(
+    vault_path: Path, port: int, api_key: str, dry_run: bool = False,
+) -> None:
     """Write Local REST API plugin data.json."""
     config_dir = vault_path / ".obsidian" / "plugins" / "obsidian-local-rest-api"
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -257,7 +263,9 @@ def _write_rest_api_config(vault_path: Path, port: int, api_key: str, dry_run: b
         print_success(f"Configured REST API on port {port}")
 
 
-def _write_mcp_connector_config(vault_path: Path, bearer_token: str, dry_run: bool = False) -> None:
+def _write_mcp_connector_config(
+    vault_path: Path, bearer_token: str, dry_run: bool = False,
+) -> None:
     """Write MCP Connector (istefox) plugin data.json."""
     config_dir = vault_path / ".obsidian" / "plugins" / "mcp-tools-istefox"
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -294,7 +302,7 @@ def _write_mcp_connector_config(vault_path: Path, bearer_token: str, dry_run: bo
             shutil.copy2(config_file, backup)
 
         config_file.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-        print_success(f"Configured MCP Connector with bearer token")
+        print_success("Configured MCP Connector with bearer token")
 
 
 def _generate_claude_md(vault_name: str, vault_path: Path, dry_run: bool = False) -> None:
@@ -307,24 +315,30 @@ This project uses a 3-layer memory system. **Never duplicate knowledge across la
 
 | Layer | What | Where | Search |
 |-------|------|------|--------|
-| 1. claude-mem | Session observations, "how did we fix X?" | SQLite + Chroma (`~/.claude-mem/`) | `/mem-search`, MCP tools |
-| 2. Obsidian vault | Project knowledge, user preferences, decisions | `Claude/` folder (this vault) | obsidian-mcp-tools |
-| 3. Claude native | Pointer ONLY — never store knowledge here | `memory/MEMORY.md` | — |
+| 1. claude-mem | Session observations | `~/.claude-mem/` | `/mem-search` |
+| 2. Obsidian vault | Project knowledge | `Claude/` folder | obsidian-mcp-tools |
+| 3. Claude native | Pointer only | `memory/MEMORY.md` | - |
 
 ### Rules
 
-- **New knowledge → Obsidian vault (Layer 2).** Use `create_vault_file` or `patch_vault_file` to write to `Claude/`.
+- **New knowledge → Obsidian vault (Layer 2).**
+  Use `create_vault_file` or `patch_vault_file` to write to `Claude/`.
 - **Session observations → claude-mem (Layer 1).** Automatic via hooks.
-- **Claude native memory → pointer only.** `memory/MEMORY.md` should only say "Use MCP tools to read/write the vault."
+- **Claude native memory → pointer only.** `memory/MEMORY.md` should only say
+  "Use MCP tools to read/write the vault."
 - **If in doubt**, ask: "Is this a session-level observation or project-level knowledge?"
 
 ### Semantic Search
 
-**Primary search method.** Use `search_vault_smart` for all vault lookups. It uses the MCP Connector's built-in Transformers.js and re-indexes on every query — always up to date.
+**Primary search method.** Use `search_vault_smart` for all vault lookups.
+It uses the MCP Connector's built-in Transformers.js and re-indexes on every
+query — always up to date.
 
-Fallback: `search_vault_simple` for substring search when the semantic index is initializing or you need exact matches.
+Fallback: `search_vault_simple` for substring search when the semantic index
+is initializing or you need exact matches.
 
-Only use `get_vault_file` directly when you already know the exact file and need its full content.
+Only use `get_vault_file` directly when you already know the exact
+file and need its full content.
 
 ### Session Lifecycle
 
@@ -349,7 +363,10 @@ Only use `get_vault_file` directly when you already know the exact file and need
                 claude_md.write_text(existing + "\n\n" + content, encoding="utf-8")
                 print_success(f"Appended memory architecture to {claude_md}")
             else:
-                print_warning(f"{claude_md} already contains memory architecture section. Skipping.")
+                print_warning(
+                    f"{claude_md} already contains memory "
+                    "architecture section. Skipping."
+                )
         else:
             claude_md.write_text(content, encoding="utf-8")
             print_success(f"Created {claude_md}")
@@ -398,7 +415,7 @@ def run(
     dry_run: bool = False,
     skip_semantic: bool = False,
     non_interactive: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """Create vault directory structure and configure plugins.
 
     Returns:
@@ -407,7 +424,10 @@ def run(
     vault = Path(vault_path).expanduser().resolve()
 
     if not re.match(r'^[a-zA-Z0-9_-]+$', vault_name):
-        print_error(f"Invalid vault name '{vault_name}'. Use only letters, numbers, hyphens, and underscores.")
+        print_error(
+            f"Invalid vault name '{vault_name}'. "
+            "Use only letters, numbers, hyphens, and underscores."
+        )
         raise SystemExit(1)
 
     # Step 1: Allocate ports

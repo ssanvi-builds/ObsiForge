@@ -80,7 +80,7 @@ def install_fnm(non_interactive: bool = False, dry_run: bool = False) -> bool:
 
     plat = get_platform()
     if dry_run:
-        console.print(f"  [dim]Would install fnm (Fast Node Manager)[/dim]")
+        console.print("  [dim]Would install fnm (Fast Node Manager)[/dim]")
         return True
 
     if not _confirm_install("fnm (Fast Node Manager)", non_interactive):
@@ -130,9 +130,10 @@ def install_node(non_interactive: bool = False, dry_run: bool = False) -> bool:
         return False
 
     # Try fnm first (cross-platform, version-managed)
-    if not _check_tool("fnm"):
-        if not install_fnm(non_interactive=non_interactive, dry_run=dry_run):
-            # fnm install failed, try direct install
+    if not _check_tool("fnm") and not install_fnm(
+        non_interactive=non_interactive, dry_run=dry_run
+    ):
+        # fnm install failed, try direct install
             if plat == "macos" and get_brew_path():
                 return _run_cmd([str(get_brew_path()), "install", "node"], "Node.js via Homebrew")
             if plat == "linux":
@@ -254,7 +255,9 @@ def install_uv(non_interactive: bool = False, dry_run: bool = False) -> bool:
                 [sys.executable, "-m", "pip", "install", "uv"],
                 "uv via pip",
             )
-        console.print("  [yellow]⚠[/yellow] Cannot install uv automatically on Windows without pip.")
+        console.print(
+            "  [yellow]⚠[/yellow] Cannot install uv automatically on Windows without pip."
+        )
         console.print("  Install manually: https://docs.astral.sh/uv/getting-started/installation/")
         return False
 
@@ -298,9 +301,8 @@ def install_git(non_interactive: bool = False, dry_run: bool = False) -> bool:
         if pkg_mgr == "pacman":
             return _run_cmd(["sudo", "pacman", "-S", "--noconfirm", "git"], "git via pacman")
 
-    if plat == "windows":
-        if find_executable("winget"):
-            return _run_cmd(["winget", "install", "Git.Git"], "git via winget")
+    if plat == "windows" and find_executable("winget"):
+        return _run_cmd(["winget", "install", "Git.Git"], "git via winget")
 
     console.print("  [yellow]⚠[/yellow] Cannot install git automatically. Install manually: https://git-scm.com/")
     return False
@@ -364,7 +366,7 @@ def install_claude_mem(non_interactive: bool = False, dry_run: bool = False) -> 
 
 # ─── Installer Registry ───────────────────────────────────────────
 
-INSTALLERS: dict[str, Callable] = {
+INSTALLERS: dict[str, Callable[..., bool]] = {
     "Node.js": install_node,
     "uv": install_uv,
     "git": install_git,

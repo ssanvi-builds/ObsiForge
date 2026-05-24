@@ -1,53 +1,60 @@
 # Contributing to ObsiForge
 
-Thanks for your interest! Here's how to get started.
+Thanks for your interest! Here's how to contribute.
 
-## Development Setup
+## Setup
 
 ```bash
-# Clone and enter the repo
-git clone https://github.com/ssanvi/obsiforge.git
-cd obsiforge
-
-# Create venv and install in editable mode
-uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
-
-# Install the search MCP dependencies
-cd src/obsiforge/search && npm install && npm run build && cd ../../..
-
-# Run tests
-pytest tests/ -v
+git clone https://github.com/ssanvi-builds/ObsiForge.git
+cd ObsiForge
+uv sync
 ```
 
-## Project Structure
+## Development
 
-- `src/obsiforge/` — Python CLI and phases
-- `src/obsiforge/search/` — TypeScript MCP search server
-- `tests/` — Python tests (CLI + utils)
+```bash
+# Run tests
+uv run pytest tests/ -v
 
-## Making Changes
+# Lint
+uv run ruff check src/
 
-1. Create a branch: `git checkout -b feat/your-feature`
-2. Make your changes
-3. Add tests for new functionality
-4. Run `pytest tests/ -v` and ensure all pass
-5. Open a pull request
+# Try it
+uv run obsiforge init --name test --path /tmp/test-vault --dry-run
+```
 
-## Code Style
+## Pull Requests
 
-- **Python**: Follow PEP 8. Use type hints. Keep functions under 50 lines.
-- **TypeScript**: Follow the existing patterns in `search/src/`.
-- **Commits**: Use conventional commits (`feat:`, `fix:`, `chore:`, `docs:`).
+1. Fork the repo
+2. Create a feature branch: `git checkout -b feat/my-feature`
+3. Make changes with tests
+4. Ensure all tests pass: `uv run pytest`
+5. Push and open a PR
+
+## Commit Messages
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+feat: add hybrid search with RRF fusion
+fix: prevent port collisions between vaults
+docs: add troubleshooting section
+refactor: remove Smart Connections dependency
+```
 
 ## Reporting Issues
 
-Open a GitHub issue with:
-- ObsiForge version (`obsiforge --version`)
-- OS and Python version
-- Full output of `obsiforge doctor`
-- Steps to reproduce
+- **Bug reports**: Include OS, Python version, `obsiforge --version`, and full error output
+- **Feature requests**: Describe the problem you're trying to solve, not just the solution
+
+## Code Style
+
+- Python 3.12+ with type hints
+- Rich for CLI output, Typer for commands
+- Functions < 50 lines, files < 800 lines
+- No mutation — prefer creating new objects
+- Run `obsiforge doctor` to verify setup
 
 ## License
 
-By contributing, you agree your code will be licensed under the MIT License.
+By contributing, you agree that your contributions will be licensed under the MIT License.

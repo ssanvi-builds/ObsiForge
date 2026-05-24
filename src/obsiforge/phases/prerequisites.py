@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import re
 import subprocess
+from typing import Any
 
 from rich.console import Console
 from rich.table import Table
 
 from obsiforge.utils.installer import INSTALLERS
 from obsiforge.utils.platform import (
-    expand_path,
-    find_executable,
     get_claude_path,
     get_git_path,
     get_node_path,
@@ -97,7 +96,8 @@ def _check_python() -> tuple[bool, str]:
         major = int(match.group(1))
         minor = int(match.group(2))
         if (major, minor) < MIN_PYTHON_VERSION:
-            return False, f"version {version} (need >= {MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]})"
+            needed = f"{MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]}"
+            return False, f"version {version} (need >= {needed})"
 
     return True, f"version {version}"
 
@@ -119,7 +119,14 @@ def _check_obsidian() -> tuple[bool, str]:
             return True, "running (found process)"
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
-    return False, "not found — can auto-install via Homebrew"
+    plat = get_platform()
+    install_hints = {
+        "macos": "Homebrew",
+        "linux": "snap",
+        "windows": "winget",
+    }
+    install_hint = install_hints.get(plat, "package manager")
+    return False, f"not found — can auto-install via {install_hint}"
 
 
 def _check_claude() -> tuple[bool, str]:
@@ -166,7 +173,7 @@ def run(
     dry_run: bool = False,
     non_interactive: bool = False,
     auto_install: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """Check all prerequisites and offer to install missing items.
 
     Args:
@@ -201,12 +208,12 @@ def run(
     table.add_column("Status")
     table.add_column("Details")
 
-    for name, check_fn in checks:
+    for name, _ in checks:
         info = results[name]
         if info["found"]:
-            table.add_row(name, "[green]OK[/green]", info["details"])
+            table.add_row(name, "[green]OK[/green]", str(info["details"]))
         else:
-            table.add_row(name, "[red]MISSING[/red]", info["details"])
+            table.add_row(name, "[red]MISSING[/red]", str(info["details"]))
 
     console.print(table)
 
@@ -222,7 +229,10 @@ def run(
     missing_hard = [name for name in HARD_REQUIREMENTS if not results.get(name, {}).get("found")]
 
     if missing_hard:
-        console.print(f"[bold yellow]Missing prerequisites: {', '.join(missing_hard)}[/bold yellow]")
+        console.print(
+            f"[bold yellow]Missing prerequisites: "
+            f"{', '.join(missing_hard)}[/bold yellow]"
+        )
 
         # Try auto-install for missing items
         installed_any = False
@@ -262,7 +272,10 @@ def run(
                                     installed_any = True
 
         # Final check after installations
-        still_missing = [name for name in HARD_REQUIREMENTS if not results.get(name, {}).get("found")]
+        still_missing = [
+            name for name in HARD_REQUIREMENTS
+            if not results.get(name, {}).get("found")
+        ]
         if still_missing:
             console.print(f"\n[bold red]Still missing: {', '.join(still_missing)}[/bold red]")
             console.print("Install them manually before running obsiforge init again.")
@@ -274,7 +287,10 @@ def run(
             print_success("All prerequisites installed successfully.")
     else:
         # Only optional items missing (claude-mem)
-        print_warning("Some optional components are missing. They will be installed automatically.")
+        print_warning(
+            "Some optional components are missing. "
+            "They will be installed automatically."
+        )
 
     print_success("All required prerequisites met.")
     return results

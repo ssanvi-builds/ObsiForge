@@ -6,11 +6,11 @@ import json
 import socket
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import httpx
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 
 from obsiforge.utils.platform import get_claude_config_dir
 from obsiforge.utils.prompt import print_error, print_success, print_warning
@@ -18,7 +18,7 @@ from obsiforge.utils.prompt import print_error, print_success, print_warning
 console = Console()
 
 
-def _check_obsidian_running() -> dict:
+def _check_obsidian_running() -> dict[str, Any]:
     """Check if Obsidian is running."""
     try:
         result = subprocess.run(
@@ -34,7 +34,7 @@ def _check_obsidian_running() -> dict:
     return {"running": False, "pids": []}
 
 
-def _check_port_in_use(port: int) -> dict:
+def _check_port_in_use(port: int) -> dict[str, Any]:
     """Check if a specific port is in use."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -46,7 +46,7 @@ def _check_port_in_use(port: int) -> dict:
         return {"in_use": False}
 
 
-def _check_mcp_auth(vault_path: str, bearer_token: str, mcp_port: int) -> dict:
+def _check_mcp_auth(vault_path: str, bearer_token: str, mcp_port: int) -> dict[str, Any]:
     """Check if MCP Connector accepts the bearer token."""
     try:
         resp = httpx.post(
@@ -67,13 +67,16 @@ def _check_mcp_auth(vault_path: str, bearer_token: str, mcp_port: int) -> dict:
         if resp.status_code == 200:
             return {"auth_ok": True, "details": "MCP Connector responding"}
         if resp.status_code == 401:
-            return {"auth_ok": False, "details": "Bearer token rejected — token may have changed in Obsidian"}
+            return {
+                "auth_ok": False,
+                "details": "Bearer token rejected — token may have changed in Obsidian",
+            }
     except (httpx.ConnectError, httpx.TimeoutException):
         return {"auth_ok": False, "details": f"MCP Connector not responding on port {mcp_port}"}
     return {"auth_ok": False, "details": "Unexpected response"}
 
 
-def _check_plugins_enabled(vault_path: str) -> dict:
+def _check_plugins_enabled(vault_path: str) -> dict[str, Any]:
     """Check which required Obsidian plugins are enabled."""
     vault = Path(vault_path).expanduser()
     community_plugins = vault / ".obsidian" / "community-plugins.json"
@@ -81,18 +84,30 @@ def _check_plugins_enabled(vault_path: str) -> dict:
     required = {"mcp-tools-istefox", "obsidian-local-rest-api"}
 
     if not community_plugins.exists():
-        return {"enabled": set(), "missing": required, "details": "community-plugins.json not found"}
+        return {
+            "enabled": set(),
+            "missing": required,
+            "details": "community-plugins.json not found",
+        }
 
     try:
         enabled_list = json.loads(community_plugins.read_text())
         enabled = set(enabled_list)
         missing = required - enabled
-        return {"enabled": enabled, "missing": missing, "details": f"{len(enabled & required)}/{len(required)} enabled"}
+        return {
+            "enabled": enabled,
+            "missing": missing,
+            "details": f"{len(enabled & required)}/{len(required)} enabled",
+        }
     except json.JSONDecodeError:
-        return {"enabled": set(), "missing": required, "details": "community-plugins.json is invalid"}
+        return {
+            "enabled": set(),
+            "missing": required,
+            "details": "community-plugins.json is invalid",
+        }
 
 
-def _check_settings_json() -> dict:
+def _check_settings_json() -> dict[str, Any]:
     """Validate ~/.claude/settings.json structure."""
     config_dir = get_claude_config_dir()
     settings_path = config_dir / "settings.json"
@@ -134,7 +149,7 @@ def _check_settings_json() -> dict:
     return {"valid": True, "details": "all required keys present"}
 
 
-def _check_vault_files(vault_path: str) -> dict:
+def _check_vault_files(vault_path: str) -> dict[str, Any]:
     """Check if required vault files exist."""
     vault = Path(vault_path).expanduser()
     required = {
@@ -171,7 +186,7 @@ def run_doctor(
 
     # If no vault specified, check the first one in state
     if not vault_name and vaults:
-        vault_name = list(vaults.keys())[0]
+        vault_name = next(iter(vaults.keys()))
     if vault_name and not vault_path:
         vault_path = vaults.get(vault_name, {}).get("vault_path")
 
@@ -230,7 +245,9 @@ def run_doctor(
             else:
                 missing_str = ", ".join(plugins_check["missing"])
                 print_error(f"Plugins: missing {missing_str}")
-                console.print("[dim]  Fix: Open Obsidian → Settings → Community plugins → Enable both plugins[/dim]")
+                console.print(
+                    "[dim]  Fix: Obsidian → Settings → Community plugins → Enable both[/dim]"
+                )
             checks.append(("Plugins", plugins_check))
 
             # MCP Connector port
@@ -244,7 +261,10 @@ def run_doctor(
                         print_success(f"MCP auth: {auth_check['details']}")
                     else:
                         print_error(f"MCP auth: {auth_check['details']}")
-                        console.print("[dim]  Fix: Update bearer token in .mcp.json to match Obsidian plugin settings[/dim]")
+                        console.print(
+                            "[dim]  Fix: Update bearer token in .mcp.json "
+                            "to match plugin settings[/dim]"
+                        )
                     checks.append(("MCP auth", auth_check))
             else:
                 print_error(f"MCP Connector: port {mcp_port} not responding")
@@ -256,7 +276,9 @@ def run_doctor(
             if rest_check["in_use"]:
                 print_success(f"REST API: port {rest_port} is open")
             else:
-                print_warning(f"REST API: port {rest_port} not responding (may need plugin enable)")
+                print_warning(
+                    f"REST API: port {rest_port} not responding (may need plugin enable)"
+                )
             checks.append(("REST API", rest_check))
 
     # 4. claude-mem
@@ -269,11 +291,19 @@ def run_doctor(
             print_warning(f"claude-mem worker: unexpected status {resp.status_code}")
     except (httpx.ConnectError, httpx.TimeoutException):
         print_error("claude-mem worker: not responding on port 37701")
-        console.print("[dim]  Fix: Run 'npx claude-mem start' or restart your Claude Code session[/dim]")
+        console.print(
+            "[dim]  Fix: Run 'npx claude-mem start' or "
+            "restart your Claude Code session[/dim]"
+        )
 
     # Summary
     console.rule("[bold]Summary[/bold]")
-    ok_count = sum(1 for _, c in checks if c.get("valid") or c.get("complete") or c.get("auth_ok") or c.get("in_use") or c.get("running"))
+    ok_count = sum(
+        1 for _, c in checks
+        if c.get("valid") or c.get("complete")
+        or c.get("auth_ok") or c.get("in_use")
+        or c.get("running")
+    )
     total = len(checks)
     issue_count = total - ok_count
 
@@ -284,9 +314,10 @@ def run_doctor(
         ))
     else:
         console.print(Panel(
-            f"[bold yellow]{ok_count}/{total} checks passed, {issue_count} need attention[/bold yellow]\n\n"
+            f"[bold yellow]{ok_count}/{total} checks passed, "
+            f"{issue_count} need attention[/bold yellow]\n\n"
             "Common fixes:\n"
-            "• Open vault in Obsidian → Settings → Community plugins → Enable both plugins\n"
+            "• Obsidian → Settings → Community plugins → Enable both\n"
             "• Restart Claude Code session if MCP servers aren't connecting\n"
             "• Run 'npx claude-mem start' if claude-mem worker is down",
             border_style="yellow",

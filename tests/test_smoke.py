@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -16,17 +17,22 @@ from pathlib import Path
 
 import pytest
 
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text for assertion matching."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
 # ─── Helpers ───────────────────────────────────────────────────────
 
 
-def run_cli(*args: str, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
+def run_cli(*args: str, cwd: str | None = None, timeout: int = 60) -> subprocess.CompletedProcess[str]:
     """Run obsiforge CLI and return the result."""
     result = subprocess.run(
         ["uv", "run", "obsiforge", *args],
         capture_output=True,
         text=True,
         cwd=cwd,
-        timeout=30,
+        timeout=timeout,
     )
     return result
 
@@ -57,9 +63,10 @@ class TestCLIDryRun:
     def test_init_help(self) -> None:
         result = run_cli("init", "--help")
         assert result.returncode == 0
-        assert "--name" in result.stdout
-        assert "--path" in result.stdout
-        assert "--dry-run" in result.stdout
+        output = _strip_ansi(result.stdout)
+        assert "--name" in output
+        assert "--path" in output
+        assert "--dry-run" in output
 
     def test_version(self) -> None:
         result = run_cli("--version")
@@ -410,4 +417,5 @@ class TestInstallerModule:
         """Verify --auto-install flag is recognized by the CLI."""
         result = run_cli("init", "--help")
         assert result.returncode == 0
-        assert "auto-install" in result.stdout or "auto_install" in result.stdout
+        output = _strip_ansi(result.stdout)
+        assert "auto-install" in output or "auto_install" in output

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 
@@ -22,12 +23,40 @@ REQUIRED_PLUGIN_FILES = ["main.js", "manifest.json"]
 OPTIONAL_PLUGIN_FILES = ["styles.css"]
 
 
-def _fetch_json(url: str) -> dict | None:
+def _get_github_token() -> str | None:
+    """Get GitHub token from env or gh CLI."""
+    import os
+
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        return token
+
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["gh", "auth", "token"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    return None
+
+
+def _fetch_json(url: str) -> dict[str, Any] | None:
     """Fetch JSON from a URL with error handling."""
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "obsiforge"})
+        headers = {"User-Agent": "obsiforge"}
+        token = _get_github_token()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read())
+            return dict(json.loads(resp.read()))
     except Exception as e:
         print_error(f"Failed to fetch {url}: {e}")
         return None
@@ -36,7 +65,11 @@ def _fetch_json(url: str) -> dict | None:
 def _download_file(url: str, dest: Path) -> bool:
     """Download a file from URL to local path."""
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "obsiforge"})
+        headers = {"User-Agent": "obsiforge"}
+        token = _get_github_token()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=60) as resp:
             dest.write_bytes(resp.read())
         return True

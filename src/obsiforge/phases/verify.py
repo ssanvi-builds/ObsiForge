@@ -5,19 +5,19 @@ from __future__ import annotations
 import json
 import socket
 from pathlib import Path
+from typing import Any
 
 import httpx
 from rich.console import Console
 from rich.table import Table
 
-from obsiforge.utils.platform import get_claude_config_dir, get_claude_mem_path
-from obsiforge.utils.ports import is_port_available
-from obsiforge.utils.prompt import print_error, print_step, print_success, print_warning
+from obsiforge.utils.platform import get_claude_config_dir
+from obsiforge.utils.prompt import print_step, print_success, print_warning
 
 console = Console()
 
 
-def _check_claude_mem_worker() -> dict:
+def _check_claude_mem_worker() -> dict[str, Any]:
     """Check if claude-mem worker is running."""
     try:
         resp = httpx.get("http://localhost:37701/health", timeout=5)
@@ -28,7 +28,7 @@ def _check_claude_mem_worker() -> dict:
     return {"status": "stopped", "details": "worker not responding on port 37701"}
 
 
-def _check_mcp_http(port: int) -> dict:
+def _check_mcp_http(port: int) -> dict[str, Any]:
     """Check if MCP Connector HTTP server is responding on a port."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -37,18 +37,21 @@ def _check_mcp_http(port: int) -> dict:
         sock.close()
         if result == 0:
             return {"status": "running", "details": f"port {port} is open"}
-        return {"status": "stopped", "details": f"port {port} is not responding (Obsidian not running?)"}
+        return {
+            "status": "stopped",
+            "details": f"port {port} is not responding (Obsidian not running?)",
+        }
     except OSError as e:
         return {"status": "error", "details": str(e)}
 
 
-def _check_rest_api(port: int, api_key: str) -> dict:
+def _check_rest_api(port: int, api_key: str) -> dict[str, Any]:
     """Check if Local REST API is responding."""
     try:
         resp = httpx.get(
             f"https://localhost:{port}/",
             headers={"Authorization": f"Bearer {api_key}"},
-            verify=False,  # noqa: S501 - self-signed cert on localhost
+            verify=False,
             timeout=5,
         )
         if resp.status_code in (200, 401):
@@ -58,7 +61,7 @@ def _check_rest_api(port: int, api_key: str) -> dict:
     return {"status": "stopped", "details": f"REST API not responding on port {port}"}
 
 
-def _check_vault_files(vault_path: str) -> dict:
+def _check_vault_files(vault_path: str) -> dict[str, Any]:
     """Check if required vault files exist and semantic index coverage."""
     vault = Path(vault_path)
     required = [
@@ -80,7 +83,7 @@ def _check_vault_files(vault_path: str) -> dict:
     return {"status": "ok", "details": f"all files present ({total_notes} notes)"}
 
 
-def _check_settings_json() -> dict:
+def _check_settings_json() -> dict[str, Any]:
     """Check if global settings.json has required MCP entries."""
     config_dir = get_claude_config_dir()
     settings_path = config_dir / "settings.json"
@@ -95,16 +98,13 @@ def _check_settings_json() -> dict:
 
     servers = settings.get("mcpServers", {})
     has_mem = "claude-mem" in servers
-    mem_count = sum(1 for k in servers if k.startswith("smart-connections"))
 
-    if has_mem and mem_count > 0:
-        return {"status": "ok", "details": f"claude-mem + {mem_count} smart-connections server(s)"}
     if has_mem:
-        return {"status": "partial", "details": "claude-mem present, no smart-connections"}
-    return {"status": "partial", "details": f"{mem_count} smart-connections, no claude-mem"}
+        return {"status": "ok", "details": "claude-mem configured"}
+    return {"status": "partial", "details": "claude-mem not in mcpServers"}
 
 
-def _check_hooks() -> dict:
+def _check_hooks() -> dict[str, Any]:
     """Check if required hooks are configured."""
     config_dir = get_claude_config_dir()
     settings_path = config_dir / "settings.json"
@@ -142,7 +142,7 @@ def run(
     vault_path: str,
     dry_run: bool = False,
     non_interactive: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """Check that all MCP servers respond and vault is accessible.
 
     Returns:
@@ -161,7 +161,11 @@ def run(
     api_key = vault_state.get("api_key", "")
 
     if not rest_port or not mcp_port:
-        return {"verified": False, "checks": {}, "error": "Missing port config in state. Run 'obsiforge init' first."}
+        return {
+            "verified": False,
+            "checks": {},
+            "error": "Missing port config in state. Run 'obsiforge init' first.",
+        }
 
     # Wait for Obsidian plugins to start (they need a few seconds to load)
     import time
@@ -177,7 +181,11 @@ def run(
     checks = {
         "claude-mem worker": _check_claude_mem_worker(),
         "MCP Connector": _check_mcp_http(mcp_port),
-        "Local REST API": _check_rest_api(rest_port, api_key) if api_key else {"status": "skipped", "details": "no API key"},
+        "Local REST API": (
+            _check_rest_api(rest_port, api_key)
+            if api_key
+            else {"status": "skipped", "details": "no API key"}
+        ),
         "vault files": _check_vault_files(vault_path),
         "global settings": _check_settings_json(),
         "hooks": _check_hooks(),
@@ -232,7 +240,10 @@ def get_status() -> dict[str, dict[str, str]]:
 
     return {
         "claude-mem": mem_check,
-        "obsidian-mcp-tools": {"status": "ok" if settings_check["status"] == "ok" else "unknown", "details": "check with 'obsiforge doctor'"},
+        "obsidian-mcp-tools": {
+            "status": "ok" if settings_check["status"] == "ok" else "unknown",
+            "details": "check with 'obsiforge doctor'",
+        },
         "hooks": hooks_check,
         "global settings": settings_check,
     }

@@ -2,6 +2,8 @@
 
 **One command. Three layers. Infinite memory.**
 
+> Built with [Claude Code](https://claude.ai/code). Human-directed, AI-implemented.
+
 ObsiForge sets up the complete Claude Code + Obsidian + Memory integration in a single command. No manual config, no broken MCP servers, no "which plugin do I enable?" moments.
 
 ```
@@ -10,9 +12,9 @@ obsiforge init --name work --path ~/obsidian-vaults/work
 
 That's it. You get:
 
-1. **claude-mem** — Persistent session memory (SQLite + Chroma)
-2. **Obsidian vault** — Knowledge base with MCP read/write/search tools
-3. **Semantic search** — MCP Connector's built-in Transformers.js (always up to date, re-indexes on every query)
+1. **claude-mem** — Session memory: "how did we fix X bug last time?"
+2. **Obsidian vault** — Project knowledge: architecture, decisions, preferences
+3. **Semantic search** — Find notes by meaning, not just exact words
 
 ---
 
@@ -20,7 +22,7 @@ That's it. You get:
 
 ```bash
 # Install
-uv tool install git+https://github.com/ssanvi/obsiforge
+uv tool install git+https://github.com/ssanvi-builds/ObsiForge
 
 # Set up your vault (auto-installs missing prerequisites)
 obsiforge init --name work --path ~/obsidian-vaults/work --auto-install
@@ -84,8 +86,8 @@ $ obsiforge init --name work --path ~/obsidian-vaults/work
 │ Next steps:                                                          │
 │ 1. Obsidian → Settings → Community plugins → Enable both            │
 │ 2. Wait for MCP Connector to start (check Obsidian status bar)      │
-│ 3. Restart Claude Code so MCP tools connect                        │
-│ 4. cd ~/obsidian-vaults/work && claude                               │
+│ 3. Restart Claude Code so MCP tools connect                         │
+│ 4. cd ~/obsidian-vaults/work && claude                              │
 │ 5. Run /dashboard to verify                                         │
 ╰──────────────────────────────────────────────────────────────────────╯
 ```
@@ -94,11 +96,99 @@ $ obsiforge init --name work --path ~/obsidian-vaults/work
 
 | Command | Description |
 |---------|-------------|
-| `obsiforge init` | Full 3-layer setup (prerequisites → verify) |
+| `obsiforge init` | Full setup (prerequisites → verify) |
 | `obsiforge add-vault` | Add a new vault without redoing global setup |
-| `obsiforge doctor` | Health check + auto-repair for all components |
+| `obsiforge doctor` | Health check + auto-repair |
 | `obsiforge status` | Show what's configured and what's missing |
 | `obsiforge --version` | Show version |
+
+## Daily Workflow
+
+```
+# Start of session
+cd ~/obsidian-vaults/work
+claude
+/dashboard          # Load vault context, check system health
+
+# ... work normally ...
+# Claude reads/writes vault via MCP tools automatically
+
+# End of session
+/consolidate         # Distill session observations into vault notes
+```
+
+**Session lifecycle:**
+1. `/dashboard` — Orient: read user profile, project status, recent work
+2. Work — Claude uses MCP tools to search/read/write the vault
+3. `/consolidate` — Save what matters from this session into vault notes
+
+**Key skills:**
+- `/dashboard` — Session start briefing
+- `/consolidate` — Session end: claude-mem → vault
+- `/mem-search` — Search claude-mem observations
+
+## How It Works
+
+### 3-Layer Memory
+
+Each layer has a different purpose. **Never duplicate knowledge across layers.**
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Layer 1: claude-mem                                            │
+│  What: Session observations — "how did we fix that bug?"       │
+│  Where: SQLite + ChromaDB (~/.claude-mem/)                     │
+│  How to search: /mem-search or claude-mem MCP tools             │
+│  Lifecycle: Automatic — hooks capture every session             │
+│  Example: "Tried approach X, failed, approach Y worked"       │
+├──────────────────────────────────────────────────────────────────┤
+│  Layer 2: Obsidian vault                                        │
+│  What: Project knowledge — decisions, preferences, architecture  │
+│  Where: Claude/ folder in vault                                │
+│  How to search: search_vault_smart (semantic) or                │
+│                 search_vault_simple (exact text)                 │
+│  Lifecycle: Manual — /consolidate at end of session             │
+│  Example: "We chose PostgreSQL over MongoDB for Atalaya         │
+│            because we need relational queries and ACID"          │
+├──────────────────────────────────────────────────────────────────┤
+│  Layer 3: Claude native memory                                  │
+│  What: Pointer only — "Use MCP tools to read the vault"        │
+│  Where: memory/MEMORY.md                                       │
+│  How to search: Don't — it's just an index                     │
+│  Lifecycle: Written once by obsiforge init                      │
+│  Example: "Project knowledge lives in the vault. See MEMORY.md" │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**The rule:** If it helps a *future* session understand the project better → Layer 2. If it's only about *this* session → Layer 1. Layer 3 is just a signpost.
+
+### Semantic Search
+
+MCP Connector includes **Transformers.js** for semantic search — runs entirely inside the Obsidian plugin, no separate server needed.
+
+```
+"What did we decide about the database?"  →  Finds decisiones/base-de-datos.md
+"how to avoid layout shifts"               →  Finds core-web-vitals.md (CLS section)
+"comunicación sin acoplamiento"             →  Finds event-driven-architecture.md
+```
+
+Search hierarchy:
+1. **`search_vault_smart`** — Semantic. Find notes by meaning, not exact words
+2. **`search_vault_simple`** — Exact text. For when you know the specific term
+3. **`get_vault_file`** — Direct read when you know the exact file path
+
+**Tip:** Use smart search to explore, simple search to confirm. Together they cover more ground than either alone.
+
+### 2 Obsidian Plugins
+
+| Plugin | Purpose | Auto-downloaded? |
+|--------|---------|:---:|
+| **MCP Connector** (mcp-tools-istefox) | MCP server + semantic search | Yes |
+| **Local REST API** | REST endpoint for vault operations | Yes |
+
+Both plugins are downloaded from GitHub releases during `obsiforge init`. Uses `gh auth token` or `GITHUB_TOKEN` if available to avoid rate limits.
+
+## Command Reference
 
 ### `obsiforge init`
 
@@ -107,7 +197,7 @@ obsiforge init --name work --path ~/obsidian-vaults/work
 obsiforge init --name personal --path ~/obsidian-vaults/personal --dry-run
 obsiforge init --name work --path ~/obsidian-vaults/work -y          # non-interactive
 obsiforge init --name work --path ~/obsidian-vaults/work -a          # auto-install deps
-obsiforge init --name work --path ~/obsidian-vaults/work -y -a       # hands-free setup
+obsiforge init --name work --path ~/obsidian-vaults/work -y -a       # hands-free
 ```
 
 Options:
@@ -141,50 +231,6 @@ obsiforge status          # Rich table output
 obsiforge status --json   # JSON for scripting
 ```
 
-## How It Works
-
-### 3-Layer Memory Architecture
-
-```
-┌──────────────────────────────────────────────────┐
-│  Layer 1: claude-mem                            │
-│  Session observations, "how did we fix X?"      │
-│  SQLite + ChromaDB (~/.claude-mem/)             │
-├──────────────────────────────────────────────────┤
-│  Layer 2: Obsidian vault                        │
-│  Project knowledge, user preferences, decisions  │
-│  Claude/ folder in vault                        │
-├──────────────────────────────────────────────────┤
-│  Layer 3: Claude native memory                  │
-│  Pointer only — "Use MCP tools to read vault"   │
-│  memory/MEMORY.md                               │
-└──────────────────────────────────────────────────┘
-```
-
-- **New knowledge** → Obsidian vault (Layer 2) via `create_vault_file` / `patch_vault_file`
-- **Session observations** → claude-mem (Layer 1) automatically via hooks
-- **Claude native** → pointer only, never stores knowledge directly
-
-### Semantic Search
-
-ObsiForge uses the **MCP Connector's built-in Transformers.js** for semantic search. This runs entirely inside the Obsidian plugin — no separate MCP server, no stale indexes.
-
-**Why not Smart Connections MCP?** Smart Connections' Obsidian plugin indexes fine, but its MCP server reads embeddings once at startup and caches them in memory. New notes don't appear until you restart the MCP server. MCP Connector's `search_vault_smart` re-indexes on every query, so it's always up to date.
-
-Search hierarchy:
-1. **`search_vault_smart`** — Primary. Transformers.js embeddings, always current
-2. **`search_vault_simple`** — Fallback. Substring search for exact matches
-3. **`get_vault_file`** — Direct read when you know the exact file
-
-### 2 Required Obsidian Plugins
-
-| Plugin | Purpose |
-|--------|---------|
-| **MCP Connector** (mcp-tools-istefox) | MCP server + semantic search via Transformers.js |
-| **Local REST API** | REST endpoint for vault file operations |
-
-Both plugins are downloaded from GitHub releases during `obsiforge init` — no manual downloads needed.
-
 ## Troubleshooting
 
 ### `obsiforge doctor` reports issues
@@ -199,6 +245,7 @@ Common fixes:
 - **Plugins not enabled** → Settings → Community plugins → Enable both plugins
 - **MCP auth failed** → Bearer token changed; run `obsiforge init` again or update `.mcp.json`
 - **claude-mem worker down** → Run `npx claude-mem start` or restart Claude Code
+- **Plugin download 403** → Run `gh auth login` first, or set `GITHUB_TOKEN`
 
 ### MCP servers not connecting
 
@@ -213,7 +260,7 @@ ObsiForge auto-allocates ports starting from:
 - MCP HTTP: 27200
 - claude-mem worker: 37701
 
-If ports are in use, it finds the next available one automatically. Port reservations are tracked in `~/.claude/obsiforge-state.json` to prevent collisions between vaults.
+If ports are in use, it finds the next available one. Port reservations are tracked in `~/.claude/obsiforge-state.json` to prevent collisions between vaults.
 
 ## Auto-Install
 
@@ -275,9 +322,10 @@ obsiforge/
 - [x] Full init flow (5 phases: prerequisites → verify)
 - [x] Plugin auto-download from GitHub releases
 - [x] Semantic search via MCP Connector (Transformers.js, always current)
-- [x] Doctor command (health check + auto-repair)
+- [x] Doctor command (health check + diagnostics)
 - [x] Auto-install prerequisites (`--auto-install` / `-a`)
 - [x] Port collision prevention across vaults
+- [x] GitHub token auth for plugin downloads
 - [ ] Auto-repair mode (`--fix` actually fixes things)
 - [ ] Multi-vault management improvements
 - [ ] Obsidian plugin marketplace integration

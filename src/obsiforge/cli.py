@@ -28,7 +28,10 @@ VAULT_NAME_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
 def _validate_vault_name(name: str) -> str:
     """Validate vault name contains only safe characters."""
     if not VAULT_NAME_PATTERN.match(name):
-        console.print(f"[bold red]Error:[/bold red] Invalid vault name '{name}'. Use only letters, numbers, hyphens, and underscores.")
+        console.print(
+            f"[bold red]Error:[/bold red] Invalid vault name '{name}'. "
+            "Use only letters, numbers, hyphens, and underscores."
+        )
         raise typer.Exit(code=1)
     return name
 
@@ -92,10 +95,10 @@ def init(
     """
     vault_name = _validate_vault_name(vault_name)
 
-    from obsiforge.phases.prerequisites import run as phase0
     from obsiforge.phases.claude_mem import run as phase1
-    from obsiforge.phases.vault import run as phase2
     from obsiforge.phases.mcp_config import run as phase3
+    from obsiforge.phases.prerequisites import run as phase0
+    from obsiforge.phases.vault import run as phase2
     from obsiforge.phases.verify import run as phase4
 
     console.print(
@@ -192,7 +195,7 @@ def init(
             Panel(
                 "[bold green]Setup complete![/bold green]\n\n"
                 "Next steps:\n"
-                "1. If this is a new vault: Obsidian → Settings → Community plugins → Enable both\n"
+                "1. New vault? Obsidian → Settings → Community plugins → Enable both\n"
                 "2. Wait for MCP Connector to start (check Obsidian status bar)\n"
                 "3. Restart Claude Code so MCP tools connect\n"
                 f"4. cd \"{vault_path}\" && claude\n"
@@ -219,8 +222,8 @@ def add_vault(
     """
     vault_name = _validate_vault_name(vault_name)
 
-    from obsiforge.phases.vault import run as phase2
     from obsiforge.phases.mcp_config import run as phase3
+    from obsiforge.phases.vault import run as phase2
     from obsiforge.phases.verify import run as phase4
 
     console.print(
@@ -282,7 +285,7 @@ def add_vault(
         Panel(
             f"[bold green]Vault '{vault_name}' added![/bold green]\n\n"
             "Next steps:\n"
-            "1. Open vault in Obsidian → Settings → Community plugins → Enable both plugins\n"
+            "1. Open vault in Obsidian → Settings → Community plugins → Enable both\n"
             f"2. cd \"{vault_path}\" && claude\n"
             "3. Run [bold]/dashboard[/bold] to verify",
             border_style="green",

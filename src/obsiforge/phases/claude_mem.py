@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 
-from obsiforge.utils.crypto import generate_api_key
-from obsiforge.utils.platform import get_claude_config_dir, get_claude_mem_path, get_node_path
-from obsiforge.utils.prompt import print_dry_run, print_error, print_step, print_success, print_warning
-from obsiforge.utils.settings_merge import atomic_write_json, merge_into_settings
+from obsiforge.utils.platform import get_claude_config_dir, get_claude_mem_path
+from obsiforge.utils.prompt import (
+    print_dry_run,
+    print_error,
+    print_step,
+    print_success,
+    print_warning,
+)
+from obsiforge.utils.settings_merge import merge_into_settings
 
 console = Console()
 
@@ -69,11 +74,14 @@ if (!vaultPath) {
 if (vaultPath && fs.existsSync(vaultPath)) {
   const claudeDir = path.join(vaultPath, 'Claude');
   let fileCount = 0;
-  try { fileCount = fs.readdirSync(claudeDir).filter(f => f.endsWith('.md')).length; } catch (e) { /* directory may not exist yet */ }
-  console.log(`[consolidate-reminder] Session ending. Run /consolidate to distill observations into vault: ${vaultPath}`);
+  try { fileCount = fs.readdirSync(claudeDir)
+    .filter(f => f.endsWith('.md')).length; } catch (e) { /* directory may not exist yet */ }
+  console.log(`[consolidate-reminder] Session ending. `
+    + `Run /consolidate to distill observations into vault: ${vaultPath}`);
   console.log(`[consolidate-reminder] Vault notes: ${fileCount} files available`);
 } else {
-  console.log('[consolidate-reminder] No Obsidian vault detected. Run /consolidate if working in a project with a vault.');
+  console.log('[consolidate-reminder] No Obsidian vault detected. '
+    + 'Run /consolidate if working in a project with a vault.');
 }
 """
     hook_path.write_text(script, encoding="utf-8")
@@ -86,7 +94,7 @@ def run(
     vault_path: str,
     dry_run: bool = False,
     non_interactive: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """Install claude-mem plugin and configure global settings.
 
     Returns:
@@ -142,10 +150,7 @@ def run(
     print_step("Configuring settings.json")
 
     # Read existing settings or create new
-    if settings_path.exists():
-        settings = json.loads(settings_path.read_text())
-    else:
-        settings = {}
+    json.loads(settings_path.read_text()) if settings_path.exists() else {}
 
     # Build the merge data
     mem_server_path = mem_path or Path(
@@ -154,7 +159,7 @@ def run(
 
     mem_worker_port = 37701  # Default port
 
-    merge_data: dict = {
+    merge_data: dict[str, Any] = {
         "env": {
             "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
         },
@@ -169,7 +174,8 @@ def run(
                 {
                     "matcher": "",
                     "hooks": [
-                        {"type": "command", "command": f"node {hooks_dir / 'consolidate-reminder.js'}"},
+                        {"type": "command",
+                         "command": f"node {hooks_dir / 'consolidate-reminder.js'}"},
                     ],
                 }
             ],

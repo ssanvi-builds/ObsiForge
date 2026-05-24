@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 
-from obsiforge.utils.platform import get_claude_config_dir
 from obsiforge.utils.prompt import print_dry_run, print_step, print_success, print_warning
-from obsiforge.utils.settings_merge import merge_into_settings
 
 console = Console()
 
@@ -25,7 +24,7 @@ def _write_mcp_json(
     vault = Path(vault_path)
     mcp_file = vault / ".mcp.json"
 
-    mcp_config: dict = {
+    mcp_config: dict[str, Any] = {
         "mcpServers": {
             "obsidian-mcp-tools": {
                 "type": "streamable-http",
@@ -107,7 +106,7 @@ def run(
     bearer_token: str | None = None,
     api_key: str | None = None,
     skip_semantic: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """Create .mcp.json and merge into global settings.
 
     Credentials can be passed directly (from Phase 2 results) or read

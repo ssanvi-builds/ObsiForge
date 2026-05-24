@@ -7,7 +7,6 @@ import socket
 import subprocess
 from pathlib import Path
 
-
 # Default port ranges for ObsiForge components
 REST_API_BASE = 27124  # Local REST API ports start here
 MCP_HTTP_BASE = 27200  # MCP Connector HTTP ports start here

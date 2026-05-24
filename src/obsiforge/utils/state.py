@@ -7,6 +7,7 @@ after a failure or interruption.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -36,7 +37,7 @@ def load_state() -> dict[str, Any]:
         return {"completed_phases": [], "vaults": {}, "version": "0.1.0"}
 
     try:
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        return dict(json.loads(STATE_FILE.read_text(encoding="utf-8")))
     except json.JSONDecodeError:
         console.print(f"[yellow]Warning:[/yellow] {STATE_FILE} is corrupted. Starting fresh.")
         return {"completed_phases": [], "vaults": {}, "version": "0.1.0"}
@@ -49,14 +50,16 @@ def save_state(state: dict[str, Any]) -> None:
     try:
         tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
         json.loads(tmp.read_text(encoding="utf-8"))
-        tmp.rename(STATE_FILE)
+        os.replace(tmp, STATE_FILE)
     except (json.JSONDecodeError, OSError) as e:
         tmp.unlink(missing_ok=True)
         msg = f"Failed to save state to {STATE_FILE}: {e}"
         raise RuntimeError(msg) from e
 
 
-def mark_phase_complete(phase: str, vault_name: str | None = None, extra: dict | None = None) -> None:
+def mark_phase_complete(
+    phase: str, vault_name: str | None = None, extra: dict[str, Any] | None = None,
+) -> None:
     """Mark a phase as completed.
 
     Args:

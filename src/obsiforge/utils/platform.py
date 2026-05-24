@@ -119,7 +119,16 @@ def expand_path(path: str) -> Path:
 
 def get_claude_mem_path() -> Path | None:
     """Find the claude-mem MCP server path."""
-    default = Path.home() / ".claude" / "plugins" / "marketplaces" / "thedotmack" / "plugin" / "scripts" / "mcp-server.cjs"
+    default = (
+        Path.home()
+        / ".claude"
+        / "plugins"
+        / "marketplaces"
+        / "thedotmack"
+        / "plugin"
+        / "scripts"
+        / "mcp-server.cjs"
+    )
     if default.exists():
         return default
     return None

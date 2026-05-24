@@ -18,12 +18,12 @@ from rich.console import Console
 console = Console()
 
 
-def _deep_merge(base: dict, overlay: dict) -> dict:
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge overlay into base. Lists are extended, dicts merged.
 
     Never overwrites existing scalar values — only adds new keys.
     """
-    result = {}
+    result: dict[str, Any] = {}
     for key in base:
         if isinstance(base[key], list):
             result[key] = list(base[key])  # shallow copy to avoid mutating input
@@ -57,7 +57,7 @@ def _mask_sensitive(value: str) -> str:
     return value[:8] + "..." + value[-4:]
 
 
-def atomic_write_json(path: Path, data: dict, backup: bool = True) -> None:
+def atomic_write_json(path: Path, data: dict[str, Any], backup: bool = True) -> None:
     """Write JSON data atomically with optional backup.
 
     Args:
@@ -105,9 +105,12 @@ def merge_into_settings(
         try:
             existing = json.loads(settings_path.read_text())
         except json.JSONDecodeError:
-            console.print(f"[red]Error:[/red] {settings_path} contains invalid JSON. Aborting merge.")
+            console.print(
+                f"[red]Error:[/red] {settings_path} contains "
+                "invalid JSON. Aborting merge."
+            )
             msg = f"Invalid JSON in {settings_path}"
-            raise ValueError(msg)
+            raise ValueError(msg) from None
     else:
         existing = {}
         settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,7 +137,7 @@ def merge_into_settings(
 
 
 def _diff_settings(
-    old: dict, new: dict, prefix: str = ""
+    old: dict[str, Any], new: dict[str, Any], prefix: str = ""
 ) -> list[tuple[str, str, str]]:
     """Compare old and new settings, returning a list of changes.
 
