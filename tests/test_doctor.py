@@ -19,14 +19,16 @@ class TestIsObsidianRunning:
     """Tests for is_obsidian_running."""
 
     def test_obsidian_running(self):
-        with patch("obsiforge.utils.obsidian.subprocess.run") as mock_run:
+        with patch("obsiforge.utils.obsidian.subprocess.run") as mock_run, \
+             patch("obsiforge.utils.obsidian.get_platform", return_value="macos"):
             mock_run.return_value = MagicMock(returncode=0, stdout="12345\n")
             result = is_obsidian_running()
             assert result["running"] is True
             assert "12345" in result["pids"]
 
     def test_obsidian_not_running(self):
-        with patch("obsiforge.utils.obsidian.subprocess.run") as mock_run:
+        with patch("obsiforge.utils.obsidian.subprocess.run") as mock_run, \
+             patch("obsiforge.utils.obsidian.get_platform", return_value="macos"):
             mock_run.return_value = MagicMock(returncode=1, stdout="")
             result = is_obsidian_running()
             assert result["running"] is False

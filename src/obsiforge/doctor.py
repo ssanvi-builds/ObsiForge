@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +16,11 @@ from obsiforge.utils.obsidian import (
     is_obsidian_running,
 )
 from obsiforge.utils.platform import get_claude_config_dir
-from obsiforge.utils.ports import CLAUDE_MEM_WORKER_PORT, MCP_HTTP_MAX, MCP_HTTP_RANGE, REST_API_RANGE
+from obsiforge.utils.ports import (
+    CLAUDE_MEM_WORKER_PORT,
+    MCP_HTTP_RANGE,
+    REST_API_RANGE,
+)
 from obsiforge.utils.prompt import print_error, print_success, print_warning
 
 console = Console()

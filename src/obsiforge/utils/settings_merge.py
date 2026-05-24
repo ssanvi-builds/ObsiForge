@@ -9,6 +9,7 @@ All writes are atomic: write to .tmp, validate JSON, then rename.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -80,7 +81,9 @@ def atomic_write_json(path: Path, data: dict[str, Any], backup: bool = True) -> 
         tmp_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         # Validate the written JSON
         json.loads(tmp_path.read_text(encoding="utf-8"))
-        tmp_path.rename(path)
+        # Use os.replace for cross-platform atomic rename (Path.rename
+        # fails on Windows when the target already exists)
+        os.replace(tmp_path, path)
     except (json.JSONDecodeError, OSError) as e:
         tmp_path.unlink(missing_ok=True)
         msg = f"Failed to write {path}: {e}"

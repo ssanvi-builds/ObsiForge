@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import re
+
 from typer.testing import CliRunner
 
 from obsiforge.cli import app
 
 runner = CliRunner()
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from text for assertion matching."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
 def test_version():
@@ -30,16 +37,18 @@ def test_init_help():
     """obsiforge init --help shows options."""
     result = runner.invoke(app, ["init", "--help"])
     assert result.exit_code == 0
-    assert "--name" in result.stdout
-    assert "--path" in result.stdout
-    assert "--dry-run" in result.stdout
+    output = _strip_ansi(result.stdout)
+    assert "--name" in output
+    assert "--path" in output
+    assert "--dry-run" in output
 
 
 def test_add_vault_help():
     """obsiforge add-vault --help shows arguments."""
     result = runner.invoke(app, ["add-vault", "--help"])
     assert result.exit_code == 0
-    assert "VAULT_NAME" in result.stdout
+    output = _strip_ansi(result.stdout)
+    assert "VAULT_NAME" in output
 
 
 def test_doctor():
@@ -60,5 +69,6 @@ def test_status_json():
 
     result = runner.invoke(app, ["status", "--json"])
     assert result.exit_code == 0
-    data = json.loads(result.stdout)
+    output = _strip_ansi(result.stdout)
+    data = json.loads(output)
     assert "claude-mem" in data

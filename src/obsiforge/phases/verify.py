@@ -26,7 +26,10 @@ def _check_claude_mem_worker() -> dict[str, Any]:
             return {"status": "running", "details": "worker healthy"}
     except (httpx.ConnectError, httpx.TimeoutException):
         pass
-    return {"status": "stopped", "details": f"worker not responding on port {CLAUDE_MEM_WORKER_PORT}"}
+    return {
+        "status": "stopped",
+        "details": f"worker not responding on port {CLAUDE_MEM_WORKER_PORT}",
+    }
 
 
 def _check_mcp_http(port: int) -> dict[str, Any]:
