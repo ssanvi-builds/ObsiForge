@@ -70,6 +70,7 @@ def _check_vault_files(vault_path: str) -> dict[str, Any]:
         vault / ".mcp.json",
         vault / ".claude" / "settings.local.json",
         vault / ".obsidian" / "community-plugins.json",
+        vault / ".obsidian" / "workspace.json",
     ]
 
     missing = [str(f.relative_to(vault)) for f in required if not f.exists()]
@@ -221,7 +222,16 @@ def run(
         issues = [k for k, v in checks.items() if v["status"] not in ("ok", "running", "skipped")]
         if issues:
             print_warning(f"Some components need attention: {', '.join(issues)}")
-            print_warning("Make sure Obsidian is running with all plugins enabled.")
+            console.print(
+                "\n[bold]Next steps to complete setup:[/bold]\n"
+                "  1. Open Obsidian with your vault\n"
+                "  2. Go to [bold]Settings → Community plugins[/bold]\n"
+                "  3. Click [bold]Turn on community plugins[/bold]"
+                " (trust dialog)\n"
+                "  4. Enable each plugin toggle "
+                "([bold]MCP Tools[/bold], [bold]Local REST API[/bold])\n"
+                "  5. Restart Obsidian or reload ([bold]Cmd+R[/bold])\n"
+            )
             print_warning("Run 'obsiforge doctor' for detailed diagnostics.")
 
     return {"verified": all_ok, "checks": checks}

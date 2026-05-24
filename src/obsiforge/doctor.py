@@ -19,16 +19,27 @@ console = Console()
 
 
 def _check_obsidian_running() -> dict[str, Any]:
-    """Check if Obsidian is running."""
+    """Check if Obsidian is running (cross-platform)."""
+    from obsiforge.utils.platform import get_platform
+
+    plat = get_platform()
     try:
-        result = subprocess.run(
-            ["pgrep", "-x", "Obsidian"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            return {"running": True, "pids": result.stdout.strip().split("\n")}
+        if plat == "windows":
+            result = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq Obsidian.exe"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if "Obsidian.exe" in result.stdout:
+                return {"running": True, "pids": []}
+        else:
+            flag = "-x" if plat == "macos" else "-f"
+            name = "Obsidian" if plat == "macos" else "obsidian"
+            result = subprocess.run(
+                ["pgrep", flag, name],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                return {"running": True, "pids": result.stdout.strip().split("\n")}
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
     return {"running": False, "pids": []}
@@ -46,6 +57,70 @@ def _check_port_in_use(port: int) -> dict[str, Any]:
         return {"in_use": False}
 
 
+def _find_obsidian_listening_ports() -> list[int]:
+    """Find ports that the Obsidian process is listening on."""
+    from obsiforge.utils.platform import get_platform
+
+    plat = get_platform()
+    ports: list[int] = []
+    try:
+        if plat == "macos":
+            result = subprocess.run(
+                ["lsof", "-i", "-P", "-n"],
+                capture_output=True, text=True, timeout=10,
+            )
+            import re
+            # Match lines like: Obsidian 95252 ssanvi 26u IPv4 ... TCP localhost:27200 (LISTEN)
+            for line in result.stdout.splitlines():
+                if "Obsidian" not in line or "LISTEN" not in line:
+                    continue
+                match = re.search(r"(?:localhost|\*|127\.0\.0\.1):(\d+)", line)
+                if match:
+                    ports.append(int(match.group(1)))
+        elif plat == "linux":
+            result = subprocess.run(
+                ["ss", "-tlnp"],
+                capture_output=True, text=True, timeout=10,
+            )
+            import re
+            for line in result.stdout.splitlines():
+                if "obsidian" not in line.lower():
+                    continue
+                match = re.search(r"(?:127\.0\.0\.1|\*):(\d+)", line)
+                if match:
+                    ports.append(int(match.group(1)))
+        elif plat == "windows":
+            # Find Obsidian PIDs first
+            pid_result = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq Obsidian.exe", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=5,
+            )
+            obsidian_pids: set[str] = set()
+            for line in pid_result.stdout.splitlines():
+                if "Obsidian" in line:
+                    parts = line.strip('"').split('","')
+                    if len(parts) >= 2:
+                        obsidian_pids.add(parts[1])
+            if obsidian_pids:
+                result = subprocess.run(
+                    ["netstat", "-ano"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                import re
+                for line in result.stdout.splitlines():
+                    if "LISTENING" not in line:
+                        continue
+                    pid = line.strip().split()[-1]
+                    if pid not in obsidian_pids:
+                        continue
+                    match = re.search(r"(?:127\.0\.0\.1|0\.0\.0\.0):(\d+)", line)
+                    if match:
+                        ports.append(int(match.group(1)))
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return sorted(set(ports))
+
+
 def _check_mcp_auth(vault_path: str, bearer_token: str, mcp_port: int) -> dict[str, Any]:
     """Check if MCP Connector accepts the bearer token."""
     try:
@@ -61,7 +136,10 @@ def _check_mcp_auth(vault_path: str, bearer_token: str, mcp_port: int) -> dict[s
                     "clientInfo": {"name": "obsiforge-doctor", "version": "0.1.0"},
                 },
             },
-            headers={"Authorization": f"Bearer {bearer_token}"},
+            headers={
+                "Authorization": f"Bearer {bearer_token}",
+                "Accept": "application/json, text/event-stream",
+            },
             timeout=10,
         )
         if resp.status_code == 200:
@@ -71,6 +149,10 @@ def _check_mcp_auth(vault_path: str, bearer_token: str, mcp_port: int) -> dict[s
                 "auth_ok": False,
                 "details": "Bearer token rejected — token may have changed in Obsidian",
             }
+        if resp.status_code == 406:
+            # 406 = Not Acceptable, but it means auth passed and server is
+            # responding — it just needs the Accept header for full protocol
+            return {"auth_ok": True, "details": "MCP Connector responding"}
     except (httpx.ConnectError, httpx.TimeoutException):
         return {"auth_ok": False, "details": f"MCP Connector not responding on port {mcp_port}"}
     return {"auth_ok": False, "details": "Unexpected response"}
@@ -97,6 +179,7 @@ def _check_plugins_enabled(vault_path: str) -> dict[str, Any]:
         return {
             "enabled": enabled,
             "missing": missing,
+            "complete": not missing,
             "details": f"{len(enabled & required)}/{len(required)} enabled",
         }
     except json.JSONDecodeError:
@@ -105,6 +188,26 @@ def _check_plugins_enabled(vault_path: str) -> dict[str, Any]:
             "missing": required,
             "details": "community-plugins.json is invalid",
         }
+
+
+def _check_workspace_json(vault_path: str) -> dict[str, Any]:
+    """Check if .obsidian/workspace.json exists (required for vault validity)."""
+    vault = Path(vault_path).expanduser()
+    workspace = vault / ".obsidian" / "workspace.json"
+
+    if not workspace.exists():
+        return {
+            "valid": False,
+            "details": "workspace.json not found — vault may not be registered",
+        }
+
+    try:
+        data = json.loads(workspace.read_text())
+        if not isinstance(data, dict) or len(data) == 0:
+            return {"valid": True, "details": "workspace.json exists (empty — fresh vault)"}
+        return {"valid": True, "details": "workspace.json exists"}
+    except json.JSONDecodeError:
+        return {"valid": False, "details": "workspace.json is invalid JSON"}
 
 
 def _check_settings_json() -> dict[str, Any]:
@@ -158,6 +261,7 @@ def _check_vault_files(vault_path: str) -> dict[str, Any]:
         ".mcp.json": vault / ".mcp.json",
         ".claude/settings.local.json": vault / ".claude" / "settings.local.json",
         ".obsidian/community-plugins.json": vault / ".obsidian" / "community-plugins.json",
+        ".obsidian/workspace.json": vault / ".obsidian" / "workspace.json",
     }
 
     missing = [name for name, path in required.items() if not path.exists()]
@@ -179,16 +283,44 @@ def run_doctor(
         vault_path: Optional vault path from state.
         fix: If True, attempt to fix found issues.
     """
-    from obsiforge.utils.state import load_state
+    from obsiforge.utils.state import cleanup_stale_vaults, load_state
+
+    # Clean up stale vault entries (paths that no longer exist)
+    removed = cleanup_stale_vaults()
+    if removed:
+        console.print(f"[dim]Cleaned up {removed} stale vault entries[/dim]\n")
 
     state = load_state()
     vaults = state.get("vaults", {})
 
-    # If no vault specified, check the first one in state
-    if not vault_name and vaults:
-        vault_name = next(iter(vaults.keys()))
+    # Filter out any remaining stale entries
+    valid_vaults = {
+        name: info for name, info in vaults.items()
+        if info.get("vault_path") and Path(info["vault_path"]).exists()
+    }
+
+    if not vault_name and valid_vaults:
+        if len(valid_vaults) == 1:
+            vault_name = next(iter(valid_vaults))
+        else:
+            # Multiple vaults — list them and default to most recently created
+            vault_name = max(
+                valid_vaults.keys(),
+                key=lambda n: valid_vaults[n].get("created_at", 0),
+            )
+            console.print("[dim]Available vaults:[/dim]")
+            for name in sorted(
+                valid_vaults.keys(),
+                key=lambda n: valid_vaults[n].get("created_at", 0),
+                reverse=True,
+            ):
+                marker = " ← default" if name == vault_name else ""
+                console.print(f"  [dim]• {name}{marker}[/dim]")
+            console.print(
+                "[dim]Use --vault <name> to check a different vault[/dim]\n"
+            )
     if vault_name and not vault_path:
-        vault_path = vaults.get(vault_name, {}).get("vault_path")
+        vault_path = valid_vaults.get(vault_name, {}).get("vault_path")
 
     console.print(Panel(
         "[bold cyan]ObsiForge Doctor[/bold cyan]\n"
@@ -238,6 +370,17 @@ def run_doctor(
                 print_error(f"Vault files: {files_check['details']}")
             checks.append(("Vault files", files_check))
 
+            # Workspace.json
+            workspace_check = _check_workspace_json(vault_path)
+            if workspace_check["valid"]:
+                print_success(f"workspace.json: {workspace_check['details']}")
+            else:
+                print_error(f"workspace.json: {workspace_check['details']}")
+                console.print(
+                    "[dim]  Fix: Open vault in Obsidian once to generate workspace.json[/dim]"
+                )
+            checks.append(("workspace.json", workspace_check))
+
             # Plugins enabled
             plugins_check = _check_plugins_enabled(vault_path)
             if not plugins_check["missing"]:
@@ -251,12 +394,27 @@ def run_doctor(
             checks.append(("Plugins", plugins_check))
 
             # MCP Connector port
+            obsidian_running = obs_check["running"]
             mcp_check = _check_port_in_use(mcp_port)
+
+            # If expected port doesn't respond, try to discover actual port
+            actual_mcp_port: int | None = mcp_port
+            if not mcp_check["in_use"] and obsidian_running:
+                real_ports = _find_obsidian_listening_ports()
+                # MCP Connector typically uses ports in the 27200-27210 range
+                mcp_candidates = [p for p in real_ports if 27200 <= p <= 27210]
+                if mcp_candidates:
+                    actual_mcp_port = mcp_candidates[0]
+                    mcp_check = _check_port_in_use(actual_mcp_port)
+
             if mcp_check["in_use"]:
-                print_success(f"MCP Connector: port {mcp_port} is open")
+                port_label = str(actual_mcp_port)
+                if actual_mcp_port != mcp_port:
+                    port_label = f"{actual_mcp_port} (expected {mcp_port})"
+                print_success(f"MCP Connector: port {port_label} is open")
                 # Try auth check
-                if bearer_token:
-                    auth_check = _check_mcp_auth(vault_path, bearer_token, mcp_port)
+                if bearer_token and actual_mcp_port:
+                    auth_check = _check_mcp_auth(vault_path, bearer_token, actual_mcp_port)
                     if auth_check["auth_ok"]:
                         print_success(f"MCP auth: {auth_check['details']}")
                     else:
@@ -267,26 +425,56 @@ def run_doctor(
                         )
                     checks.append(("MCP auth", auth_check))
             else:
-                print_error(f"MCP Connector: port {mcp_port} not responding")
-                console.print("[dim]  Make sure Obsidian is running with the vault open[/dim]")
+                if obsidian_running:
+                    print_error(f"MCP Connector: port {mcp_port} not responding")
+                    console.print(
+                        "[dim]  Fix: Enable MCP Tools plugin in Obsidian → "
+                        "Settings → Community plugins[/dim]"
+                    )
+                else:
+                    print_warning(
+                        f"MCP Connector: port {mcp_port} not responding"
+                        " (Obsidian not running)"
+                    )
             checks.append(("MCP Connector", mcp_check))
 
             # REST API
             rest_check = _check_port_in_use(rest_port)
+            actual_rest_port: int | None = rest_port
+            if not rest_check["in_use"] and obsidian_running:
+                real_ports = _find_obsidian_listening_ports()
+                # Local REST API typically uses ports in the 27100-27199 range
+                rest_candidates = [p for p in real_ports if 27100 <= p <= 27199]
+                if rest_candidates:
+                    actual_rest_port = rest_candidates[0]
+                    rest_check = _check_port_in_use(actual_rest_port)
+
             if rest_check["in_use"]:
-                print_success(f"REST API: port {rest_port} is open")
+                port_label = str(actual_rest_port)
+                if actual_rest_port != rest_port:
+                    port_label = f"{actual_rest_port} (expected {rest_port})"
+                print_success(f"REST API: port {port_label} is open")
             else:
-                print_warning(
-                    f"REST API: port {rest_port} not responding (may need plugin enable)"
-                )
+                if obsidian_running:
+                    print_warning(
+                        f"REST API: port {rest_port} not responding"
+                        " (may need plugin enable)"
+                    )
+                else:
+                    print_warning(
+                        f"REST API: port {rest_port} not responding"
+                        " (Obsidian not running)"
+                    )
             checks.append(("REST API", rest_check))
 
     # 4. claude-mem
     console.rule("[bold]claude-mem[/bold]")
+    claude_mem_ok = False
     try:
         resp = httpx.get("http://localhost:37701/health", timeout=5)
         if resp.status_code == 200:
             print_success("claude-mem worker: healthy")
+            claude_mem_ok = True
         else:
             print_warning(f"claude-mem worker: unexpected status {resp.status_code}")
     except (httpx.ConnectError, httpx.TimeoutException):
@@ -295,6 +483,7 @@ def run_doctor(
             "[dim]  Fix: Run 'npx claude-mem start' or "
             "restart your Claude Code session[/dim]"
         )
+    checks.append(("claude-mem", {"running": claude_mem_ok}))
 
     # Summary
     console.rule("[bold]Summary[/bold]")
@@ -317,8 +506,11 @@ def run_doctor(
             f"[bold yellow]{ok_count}/{total} checks passed, "
             f"{issue_count} need attention[/bold yellow]\n\n"
             "Common fixes:\n"
-            "• Obsidian → Settings → Community plugins → Enable both\n"
-            "• Restart Claude Code session if MCP servers aren't connecting\n"
-            "• Run 'npx claude-mem start' if claude-mem worker is down",
+            "• Open vault in Obsidian to generate workspace.json\n"
+            "• Settings → Community plugins → Turn on community plugins\n"
+            "• Enable each plugin toggle (MCP Tools, Local REST API)\n"
+            "• Restart Obsidian or reload (Cmd+R) after enabling plugins\n"
+            "• Run 'npx claude-mem start' if claude-mem worker is down\n"
+            "• Restart Claude Code session if MCP servers aren't connecting",
             border_style="yellow",
         ))

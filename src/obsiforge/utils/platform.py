@@ -32,6 +32,24 @@ def get_claude_config_dir() -> Path:
     return Path.home() / ".claude"
 
 
+def get_obsidian_config_dir() -> Path:
+    """Return the Obsidian config directory for the current platform.
+
+    Obsidian stores its vault registry (obsidian.json) and other config here:
+    - macOS: ~/Library/Application Support/obsidian/
+    - Linux: ~/.config/obsidian/
+    - Windows: %APPDATA%/obsidian/
+    """
+    plat = get_platform()
+    if plat == "macos":
+        return Path.home() / "Library" / "Application Support" / "obsidian"
+    if plat == "linux":
+        return Path.home() / ".config" / "obsidian"
+    if plat == "windows":
+        return Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "obsidian"
+    return Path.home() / ".config" / "obsidian"
+
+
 def get_obsidian_vaults_dir() -> Path:
     """Return the default Obsidian vaults directory.
 

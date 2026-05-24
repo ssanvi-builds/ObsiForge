@@ -10,6 +10,7 @@ from pathlib import Path
 # Default port ranges for ObsiForge components
 REST_API_BASE = 27124  # Local REST API ports start here
 MCP_HTTP_BASE = 27200  # MCP Connector HTTP ports start here
+MCP_HTTP_MAX = 27205  # MCP Connector only supports ports 27200-27205
 CLAUDE_MEM_WORKER_BASE = 37700  # claude-mem worker ports start here
 
 
@@ -131,6 +132,20 @@ def allocate_ports(vault_name: str) -> dict[str, int]:
     rest_port = find_available_port(REST_API_BASE, exclude=state_reserved)
 
     # Make sure MCP port doesn't collide with the REST port
-    mcp_port = find_available_port(MCP_HTTP_BASE, exclude=state_reserved | {rest_port})
+    mcp_port = find_available_port(
+        MCP_HTTP_BASE,
+        max_tries=100,
+        exclude=state_reserved | {rest_port},
+    )
+
+    if mcp_port > MCP_HTTP_MAX:
+        # MCP Connector plugin only supports ports 27200-27205.
+        # The actual port will be detected after Obsidian starts.
+        from obsiforge.utils.prompt import print_warning
+        print_warning(
+            f"MCP Connector port {mcp_port} is outside plugin range "
+            f"27200-{MCP_HTTP_MAX}. The actual port will be detected "
+            "after Obsidian starts."
+        )
 
     return {"rest_api": rest_port, "mcp_http": mcp_port}

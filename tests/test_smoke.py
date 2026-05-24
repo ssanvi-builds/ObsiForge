@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -25,16 +24,26 @@ def _strip_ansi(text: str) -> str:
 # ─── Helpers ───────────────────────────────────────────────────────
 
 
-def run_cli(*args: str, cwd: str | None = None, timeout: int = 60) -> subprocess.CompletedProcess[str]:
-    """Run obsiforge CLI and return the result."""
-    result = subprocess.run(
+def run_cli(
+    *args: str,
+    cwd: str | None = None,
+    timeout: int = 60,
+) -> subprocess.CompletedProcess[str]:
+    """Run obsiforge CLI with test env vars to avoid side effects."""
+    env = {
+        **os.environ,
+        "OBSIFORGE_SKIP_OBSIDIAN_REGISTRATION": "1",
+        # Redirect state file writes to temp dir (set by conftest autouse fixture)
+        "OBSIFORGE_STATE_DIR": os.environ.get("OBSIFORGE_STATE_DIR", ""),
+    }
+    return subprocess.run(
         ["uv", "run", "obsiforge", *args],
         capture_output=True,
         text=True,
         cwd=cwd,
         timeout=timeout,
+        env=env,
     )
-    return result
 
 
 def _import_module(name: str) -> object:
@@ -196,6 +205,39 @@ class TestLiveVaultInit:
         assert memory_md.exists(), "Claude/MEMORY.md not created"
         content = memory_md.read_text(encoding="utf-8")
         assert "pointer" in content.lower()
+        assert "user-preferences" in content
+
+    def test_init_creates_user_preferences_md(self, vault_dir: Path) -> None:
+        """Verify Claude/user-preferences.md is created."""
+        from obsiforge.phases.vault import run as vault_run
+
+        vault_run(
+            vault_name="livetest",
+            vault_path=str(vault_dir),
+            dry_run=False,
+            non_interactive=True,
+        )
+
+        prefs_md = vault_dir / "Claude" / "user-preferences.md"
+        assert prefs_md.exists(), "Claude/user-preferences.md not created"
+        content = prefs_md.read_text(encoding="utf-8")
+        assert "User Preferences" in content
+
+    def test_init_creates_appearance_json(self, vault_dir: Path) -> None:
+        """Verify .obsidian/appearance.json sets dark theme."""
+        from obsiforge.phases.vault import run as vault_run
+
+        vault_run(
+            vault_name="livetest",
+            vault_path=str(vault_dir),
+            dry_run=False,
+            non_interactive=True,
+        )
+
+        appearance = vault_dir / ".obsidian" / "appearance.json"
+        assert appearance.exists(), "appearance.json not created"
+        data = json.loads(appearance.read_text(encoding="utf-8"))
+        assert data["cssTheme"] == "obsidian"
 
     def test_init_creates_community_plugins(self, vault_dir: Path) -> None:
         """Verify community-plugins.json is created with required plugins."""
@@ -219,14 +261,17 @@ class TestLiveVaultInit:
         """Verify REST API config has port and API key."""
         from obsiforge.phases.vault import run as vault_run
 
-        result = vault_run(
+        vault_run(
             vault_name="livetest",
             vault_path=str(vault_dir),
             dry_run=False,
             non_interactive=True,
         )
 
-        config_file = vault_dir / ".obsidian" / "plugins" / "obsidian-local-rest-api" / "data.json"
+        config_file = (
+            vault_dir / ".obsidian" / "plugins"
+            / "obsidian-local-rest-api" / "data.json"
+        )
         assert config_file.exists(), "REST API data.json not created"
 
         config = json.loads(config_file.read_text(encoding="utf-8"))
@@ -238,14 +283,16 @@ class TestLiveVaultInit:
         """Verify MCP Connector config has bearer token."""
         from obsiforge.phases.vault import run as vault_run
 
-        result = vault_run(
+        vault_run(
             vault_name="livetest",
             vault_path=str(vault_dir),
             dry_run=False,
             non_interactive=True,
         )
 
-        config_file = vault_dir / ".obsidian" / "plugins" / "mcp-tools-istefox" / "data.json"
+        config_file = (
+            vault_dir / ".obsidian" / "plugins" / "mcp-tools-istefox" / "data.json"
+        )
         assert config_file.exists(), "MCP Connector data.json not created"
 
         config = json.loads(config_file.read_text(encoding="utf-8"))
@@ -253,10 +300,44 @@ class TestLiveVaultInit:
         assert "bearerToken" in config["mcpTransport"]
         assert len(config["mcpTransport"]["bearerToken"]) > 20
 
+    def test_init_creates_workspace_json(self, vault_dir: Path) -> None:
+        """Verify .obsidian/workspace.json is created."""
+        from obsiforge.phases.vault import run as vault_run
+
+        vault_run(
+            vault_name="livetest",
+            vault_path=str(vault_dir),
+            dry_run=False,
+            non_interactive=True,
+        )
+
+        workspace_file = vault_dir / ".obsidian" / "workspace.json"
+        assert workspace_file.exists(), "workspace.json not created"
+
+        data = json.loads(workspace_file.read_text(encoding="utf-8"))
+        assert isinstance(data, dict)
+
+    def test_init_creates_plugin_data_files(self, vault_dir: Path) -> None:
+        """Verify data.json exists in each plugin directory."""
+        from obsiforge.phases.vault import run as vault_run
+
+        vault_run(
+            vault_name="livetest",
+            vault_path=str(vault_dir),
+            dry_run=False,
+            non_interactive=True,
+        )
+
+        for plugin_id in ("mcp-tools-istefox", "obsidian-local-rest-api"):
+            data_file = vault_dir / ".obsidian" / "plugins" / plugin_id / "data.json"
+            assert data_file.exists(), f"data.json not created for {plugin_id}"
+            data = json.loads(data_file.read_text(encoding="utf-8"))
+            assert isinstance(data, dict)
+
     def test_init_creates_mcp_json(self, vault_dir: Path) -> None:
         """Verify .mcp.json is created in vault root."""
-        from obsiforge.phases.vault import run as vault_run
         from obsiforge.phases.mcp_config import run as mcp_run
+        from obsiforge.phases.vault import run as vault_run
 
         vault_result = vault_run(
             vault_name="livetest",
@@ -290,11 +371,10 @@ class TestLiveVaultInit:
 
         mcp_config = json.loads(mcp_file.read_text(encoding="utf-8"))
         assert "mcpServers" in mcp_config
-        assert "obsidian-mcp-tools" in mcp_config["mcpServers"]
+        assert "obsidian-mcp-tools-livetest" in mcp_config["mcpServers"]
 
     def test_vault_name_validation_blocks_special_chars(self) -> None:
         """Vault names with spaces, dots, or slashes should be rejected."""
-        from obsiforge.phases.vault import run
         import re
 
         invalid_names = ["bad vault", "my.vault", "../escape", "vault/path"]
@@ -383,15 +463,18 @@ class TestInstallerModule:
 
     def test_installer_functions_callable(self) -> None:
         from obsiforge.utils.installer import (
-            install_node,
-            install_uv,
-            install_git,
             install_claude,
             install_claude_mem,
+            install_git,
+            install_node,
             install_obsidian,
+            install_uv,
         )
 
-        for fn in [install_node, install_uv, install_git, install_claude, install_claude_mem, install_obsidian]:
+        for fn in [
+            install_node, install_uv, install_git,
+            install_claude, install_claude_mem, install_obsidian,
+        ]:
             assert callable(fn)
 
     def test_installer_dry_run_does_not_install(self) -> None:
@@ -412,6 +495,19 @@ class TestInstallerModule:
         # On macOS with brew, should return "brew"
         if plat == "macos":
             assert pkg_mgr == "brew" or pkg_mgr is None
+
+    def test_obsidian_config_dir(self) -> None:
+        """get_obsidian_config_dir should return a valid path."""
+        from obsiforge.utils.platform import get_obsidian_config_dir, get_platform
+
+        config_dir = get_obsidian_config_dir()
+        plat = get_platform()
+        if plat == "macos":
+            assert str(config_dir).endswith("obsidian")
+            assert "Application Support" in str(config_dir)
+        elif plat == "linux":
+            assert ".config/obsidian" in str(config_dir)
+        assert config_dir.name == "obsidian"
 
     def test_auto_install_flag_in_cli(self) -> None:
         """Verify --auto-install flag is recognized by the CLI."""

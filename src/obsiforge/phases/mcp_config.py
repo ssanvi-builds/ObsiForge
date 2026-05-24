@@ -24,9 +24,12 @@ def _write_mcp_json(
     vault = Path(vault_path)
     mcp_file = vault / ".mcp.json"
 
+    # Use vault-specific server name so multiple vaults don't collide
+    server_name = f"obsidian-mcp-tools-{vault_name}"
+
     mcp_config: dict[str, Any] = {
         "mcpServers": {
-            "obsidian-mcp-tools": {
+            server_name: {
                 "type": "streamable-http",
                 "url": f"http://127.0.0.1:{mcp_http_port}/mcp",
                 "headers": {
@@ -41,9 +44,9 @@ def _write_mcp_json(
         from obsiforge.utils.settings_merge import _mask_sensitive
         masked = {
             "mcpServers": {
-                "obsidian-mcp-tools": {
-                    "type": mcp_config["mcpServers"]["obsidian-mcp-tools"]["type"],
-                    "url": mcp_config["mcpServers"]["obsidian-mcp-tools"]["url"],
+                server_name: {
+                    "type": mcp_config["mcpServers"][server_name]["type"],
+                    "url": mcp_config["mcpServers"][server_name]["url"],
                     "headers": {
                         "Authorization": f"Bearer {_mask_sensitive(bearer_token)}",
                     },
@@ -64,6 +67,7 @@ def _write_mcp_json(
 
 def _write_settings_local(
     vault_path: str,
+    vault_name: str = "",
     dry_run: bool = False,
 ) -> None:
     """Create .claude/settings.local.json with enabledMcpjsonServers."""
@@ -72,21 +76,38 @@ def _write_settings_local(
     settings_dir.mkdir(parents=True, exist_ok=True)
     settings_file = settings_dir / "settings.local.json"
 
+    # Use vault-specific server name to match .mcp.json
+    server_name = f"obsidian-mcp-tools-{vault_name}" if vault_name else "obsidian-mcp-tools"
+    tool_prefix = f"mcp__{server_name}__"
+
     settings = {
         "permissions": {
             "allow": [
-                "mcp__obsidian-mcp-tools__get_vault_file",
-                "mcp__obsidian-mcp-tools__get_server_info",
-                "mcp__obsidian-mcp-tools__list_vault_files",
-                "mcp__obsidian-mcp-tools__create_vault_file",
-                "mcp__obsidian-mcp-tools__patch_vault_file",
-                "mcp__obsidian-mcp-tools__search_vault_simple",
-                "mcp__obsidian-mcp-tools__search_vault_smart",
+                # Read operations
+                f"{tool_prefix}get_vault_file",
+                f"{tool_prefix}get_server_info",
+                f"{tool_prefix}list_vault_files",
+                # Write operations
+                f"{tool_prefix}create_vault_file",
+                f"{tool_prefix}patch_vault_file",
+                f"{tool_prefix}append_to_vault_file",
+                f"{tool_prefix}update_active_file",
+                # Search operations
+                f"{tool_prefix}search_vault_simple",
+                f"{tool_prefix}search_vault_smart",
+                # Link & tag operations
+                f"{tool_prefix}get_backlinks",
+                f"{tool_prefix}get_outgoing_links",
+                f"{tool_prefix}get_files_by_tag",
+                f"{tool_prefix}list_tags",
+                # claude-mem
                 "mcp__plugin_claude-mem_mcp-search__search",
+                "mcp__plugin_claude-mem_mcp-search__timeline",
+                "mcp__plugin_claude-mem_mcp-search__get_observations",
             ]
         },
         "enabledMcpjsonServers": [
-            "obsidian-mcp-tools",
+            server_name,
         ],
     }
 
@@ -145,7 +166,7 @@ def run(
 
     # Step 2: Create .claude/settings.local.json
     print_step("Creating .claude/settings.local.json")
-    _write_settings_local(vault_path, dry_run=dry_run)
+    _write_settings_local(vault_path, vault_name=vault_name, dry_run=dry_run)
 
     return {
         "mcp_configured": True,

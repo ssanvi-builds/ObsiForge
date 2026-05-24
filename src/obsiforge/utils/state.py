@@ -15,7 +15,15 @@ from rich.console import Console
 
 console = Console()
 
-STATE_DIR = Path.home() / ".claude"
+def _get_state_dir() -> Path:
+    """Return the state directory, respecting OBSIFORGE_STATE_DIR env override."""
+    env_dir = os.environ.get("OBSIFORGE_STATE_DIR")
+    if env_dir:
+        return Path(env_dir)
+    return Path.home() / ".claude"
+
+
+STATE_DIR = _get_state_dir()
 STATE_FILE = STATE_DIR / "obsiforge-state.json"
 
 PHASES = [
@@ -98,3 +106,22 @@ def is_phase_complete(phase: str, vault_name: str | None = None) -> bool:
 def reset_state() -> None:
     """Remove the state file (for fresh install)."""
     STATE_FILE.unlink(missing_ok=True)
+
+
+def cleanup_stale_vaults() -> int:
+    """Remove vault entries whose paths no longer exist.
+
+    Returns:
+        Number of stale entries removed.
+    """
+    state = load_state()
+    vaults = state.get("vaults", {})
+    stale = [
+        name for name, info in vaults.items()
+        if not info.get("vault_path") or not Path(info["vault_path"]).expanduser().exists()
+    ]
+    for name in stale:
+        del vaults[name]
+    if stale:
+        save_state(state)
+    return len(stale)

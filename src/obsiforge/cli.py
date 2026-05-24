@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 
 import typer
 from rich.console import Console
@@ -152,6 +153,7 @@ def init(
             "api_key": phase2_results.get("api_key"),
             "bearer_token": phase2_results.get("bearer_token"),
             "vault_path": phase2_results.get("vault_path"),
+            "created_at": time.time(),
         })
         save_state(state)
         mark_phase_complete("vault", vault_name)
@@ -254,6 +256,7 @@ def add_vault(
             "api_key": phase2_results.get("api_key"),
             "bearer_token": phase2_results.get("bearer_token"),
             "vault_path": phase2_results.get("vault_path"),
+            "created_at": time.time(),
         })
         save_state(state)
         mark_phase_complete("vault", vault_name)

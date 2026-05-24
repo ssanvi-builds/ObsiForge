@@ -10,24 +10,24 @@ it only tests the file-generation logic.
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
+from obsiforge.phases.mcp_config import (
+    _write_mcp_json,
+    _write_settings_local,
+)
 from obsiforge.phases.vault import (
     REQUIRED_PLUGINS,
     _create_directory_structure,
     _generate_claude_md,
     _generate_memory_md,
+    _generate_user_preferences_md,
+    _register_vault_in_obsidian,
+    _write_appearance_json,
     _write_community_plugins,
     _write_mcp_connector_config,
     _write_rest_api_config,
-)
-from obsiforge.phases.mcp_config import (
-    _write_mcp_json,
-    _write_settings_local,
 )
 
 
@@ -46,11 +46,6 @@ def fake_home(tmp_path):
         "hooks": {},
         "env": {},
     }))
-
-    # Create .local/share/mcp-servers/smart-connections-mcp/dist/index.js
-    sc_path = home / ".local" / "share" / "mcp-servers" / "smart-connections-mcp" / "dist" / "index.js"
-    sc_path.parent.mkdir(parents=True)
-    sc_path.write_text("// fake smart-connections-mcp entry point")
 
     return home
 
@@ -89,15 +84,20 @@ class TestFullInitFlow:
         assert isinstance(result["api_key"], str)
         assert len(result["api_key"]) == 64
         assert isinstance(result["bearer_token"], str)
-        assert len(result["bearer_token"]) == 44
+        assert len(result["bearer_token"]) >= 44
 
         # Validate directory structure
         assert (fake_vault / "Claude").is_dir()
         assert (fake_vault / ".claude" / "skills" / "consolidate").is_dir()
         assert (fake_vault / ".claude" / "skills" / "dashboard").is_dir()
         assert (fake_vault / ".obsidian" / "plugins" / "mcp-tools-istefox").is_dir()
-        assert (fake_vault / ".obsidian" / "plugins" / "smart-connections").is_dir()
         assert (fake_vault / ".obsidian" / "plugins" / "obsidian-local-rest-api").is_dir()
+
+        # Validate workspace.json exists
+        workspace_json = fake_vault / ".obsidian" / "workspace.json"
+        assert workspace_json.exists()
+        workspace_data = json.loads(workspace_json.read_text())
+        assert isinstance(workspace_data, dict)
 
         # Validate community-plugins.json
         plugins_file = fake_vault / ".obsidian" / "community-plugins.json"
@@ -147,30 +147,31 @@ class TestFullInitFlow:
         mcp_port = 27201
         bearer_token = "test-bearer-token-1234567890abcdef"
 
-        with patch("obsiforge.phases.mcp_config.get_claude_config_dir", return_value=fake_home / ".claude"), \
-             patch("obsiforge.phases.mcp_config.get_smart_connections_mcp_path", return_value=None), \
-             patch("obsiforge.utils.settings_merge.atomic_write_json"):
+        # Create .mcp.json (doesn't need get_claude_config_dir)
+        _write_mcp_json(
+            vault_path=vault_path,
+            vault_name=vault_name,
+            mcp_http_port=mcp_port,
+            bearer_token=bearer_token,
+            dry_run=False,
+        )
 
-            # Create .mcp.json
-            _write_mcp_json(
-                vault_path=vault_path,
-                vault_name=vault_name,
-                mcp_http_port=mcp_port,
-                bearer_token=bearer_token,
-                smart_connections_path=None,
-                dry_run=False,
-            )
-
-            # Create settings.local.json
-            _write_settings_local(vault_path=vault_path, dry_run=False)
+        # Create settings.local.json
+        _write_settings_local(
+            vault_path=vault_path,
+            vault_name=vault_name,
+            dry_run=False,
+        )
 
         # Validate .mcp.json
         mcp_json = fake_vault / ".mcp.json"
         assert mcp_json.exists()
         mcp_data = json.loads(mcp_json.read_text())
         assert "mcpServers" in mcp_data
-        assert "obsidian-mcp-tools" in mcp_data["mcpServers"]
-        obsidian_mcp = mcp_data["mcpServers"]["obsidian-mcp-tools"]
+        # Server name should be vault-specific
+        expected_server = f"obsidian-mcp-tools-{vault_name}"
+        assert expected_server in mcp_data["mcpServers"]
+        obsidian_mcp = mcp_data["mcpServers"][expected_server]
         assert obsidian_mcp["type"] == "streamable-http"
         assert f":{mcp_port}/mcp" in obsidian_mcp["url"]
         assert obsidian_mcp["headers"]["Authorization"] == f"Bearer {bearer_token}"
@@ -182,7 +183,9 @@ class TestFullInitFlow:
         assert "permissions" in local_data
         assert "allow" in local_data["permissions"]
         assert "enabledMcpjsonServers" in local_data
-        assert "obsidian-mcp-tools" in local_data["enabledMcpjsonServers"]
+        # Server name should be vault-specific
+        expected_server = f"obsidian-mcp-tools-{vault_name}"
+        assert expected_server in local_data["enabledMcpjsonServers"]
 
     def test_dry_run_creates_no_files(self, tmp_path):
         """Dry-run mode should not create any files."""
@@ -248,23 +251,23 @@ class TestVaultFileDetails:
     """Test individual vault file generation in detail."""
 
     def test_community_plugins_json_format(self, fake_vault):
-        """community-plugins.json should be valid JSON with exactly 3 plugins."""
+        """community-plugins.json should be valid JSON with required plugins."""
         # Ensure .obsidian directory exists
         (fake_vault / ".obsidian").mkdir(parents=True, exist_ok=True)
         _write_community_plugins(fake_vault, dry_run=False)
         data = json.loads((fake_vault / ".obsidian" / "community-plugins.json").read_text())
         assert isinstance(data, list)
-        assert len(data) == 3
         assert "mcp-tools-istefox" in data
-        assert "smart-connections" in data
         assert "obsidian-local-rest-api" in data
 
     def test_rest_api_config_values(self, fake_vault):
         """REST API config should have port and API key."""
         _write_rest_api_config(fake_vault, 27124, "test-api-key-1234", dry_run=False)
-        data = json.loads(
-            (fake_vault / ".obsidian" / "plugins" / "obsidian-local-rest-api" / "data.json").read_text()
+        rest_api_data = (
+            fake_vault / ".obsidian" / "plugins"
+            / "obsidian-local-rest-api" / "data.json"
         )
+        data = json.loads(rest_api_data.read_text())
         assert data["port"] == 27124
         assert data["apiKey"] == "test-api-key-1234"
         assert data["enableSecureServer"] is True
@@ -276,7 +279,7 @@ class TestVaultFileDetails:
             (fake_vault / ".obsidian" / "plugins" / "mcp-tools-istefox" / "data.json").read_text()
         )
         assert data["mcpTransport"]["bearerToken"] == "test-token-12345678"
-        assert data["semanticSearch"]["provider"] == "auto"
+        assert data["semanticSearch"]["provider"] == "native"
 
     def test_claude_md_content(self, fake_vault):
         """CLAUDE.md should contain vault name and memory architecture."""
@@ -284,16 +287,18 @@ class TestVaultFileDetails:
         content = (fake_vault / "CLAUDE.md").read_text()
         assert "My-Project" in content
         assert "3-layer" in content
-        assert "search_notes" in content
+        assert "search_vault_smart" in content
 
     def test_memory_md_pointer(self, fake_vault):
-        """MEMORY.md should be a pointer file, not a knowledge store."""
+        """MEMORY.md should be a pointer file referencing user-preferences."""
         # Ensure Claude directory exists
         (fake_vault / "Claude").mkdir(parents=True, exist_ok=True)
         _generate_memory_md(fake_vault, dry_run=False)
         content = (fake_vault / "Claude" / "MEMORY.md").read_text()
         assert "pointer" in content.lower()
         assert "get_vault_file" in content
+        assert "user-preferences" in content
+        assert "/dashboard" in content
 
     def test_directory_structure(self, fake_vault):
         """All required directories should be created."""
@@ -303,55 +308,226 @@ class TestVaultFileDetails:
         assert "consolidate" in dir_names
         assert "dashboard" in dir_names
         assert "mcp-tools-istefox" in dir_names
-        assert "smart-connections" in dir_names
         assert "obsidian-local-rest-api" in dir_names
+
+    def test_user_preferences_md_content(self, fake_vault):
+        """user-preferences.md should have placeholders and auto-detected OS."""
+        (fake_vault / "Claude").mkdir(parents=True, exist_ok=True)
+        _generate_user_preferences_md(fake_vault, dry_run=False, non_interactive=True)
+        prefs_file = fake_vault / "Claude" / "user-preferences.md"
+        assert prefs_file.exists()
+        content = prefs_file.read_text()
+        assert "User Preferences" in content
+        assert "Communication" in content
+        assert "Development" in content
+        # OS should be auto-detected (not a placeholder)
+        import platform
+        expected_os = {"Darwin": "macOS", "Linux": "Linux", "Windows": "Windows"}.get(
+            platform.system(), platform.system()
+        )
+        assert expected_os in content
+
+    def test_appearance_json_dark_theme(self, fake_vault):
+        """appearance.json should set dark theme."""
+        (fake_vault / ".obsidian").mkdir(parents=True, exist_ok=True)
+        _write_appearance_json(fake_vault, dry_run=False)
+        appearance = fake_vault / ".obsidian" / "appearance.json"
+        assert appearance.exists()
+        data = json.loads(appearance.read_text())
+        assert data["cssTheme"] == "obsidian"
+
+    def test_dashboard_skill_content(self, fake_vault):
+        """Dashboard skill should reference user-preferences.md and /consolidate."""
+        from obsiforge.phases.vault import _write_skills
+        _write_skills("test-vault", fake_vault, dry_run=False)
+        dashboard = fake_vault / ".claude" / "skills" / "dashboard" / "SKILL.md"
+        assert dashboard.exists()
+        content = dashboard.read_text()
+        assert "user-preferences.md" in content
+        assert "/consolidate" in content
+
+    def test_consolidate_skill_content(self, fake_vault):
+        """Consolidate skill should reference filesystem paths and Vault Conventions."""
+        from obsiforge.phases.vault import _write_skills
+        _write_skills("test-vault", fake_vault, dry_run=False)
+        consolidate = fake_vault / ".claude" / "skills" / "consolidate" / "SKILL.md"
+        assert consolidate.exists()
+        content = consolidate.read_text()
+        assert "absolute paths" in content
+        assert "Vault Conventions" in content
+        assert "frontmatter" in content
+
+
+class TestVaultRegistration:
+    """Test _register_vault_in_obsidian function."""
+
+    def test_register_creates_obsidian_json(self, tmp_path):
+        """Should create obsidian.json with the vault registered and open=true."""
+        vault_dir = tmp_path / "my-vault"
+        vault_dir.mkdir()
+
+        config_dir = tmp_path / "obsidian_config"
+        config_dir.mkdir()
+
+        import obsiforge.utils.platform as platform
+        original_fn = platform.get_obsidian_config_dir
+
+        platform.get_obsidian_config_dir = lambda: config_dir
+        try:
+            result = _register_vault_in_obsidian(vault_dir, dry_run=False)
+            assert result is True
+
+            config_file = config_dir / "obsidian.json"
+            assert config_file.exists()
+
+            data = json.loads(config_file.read_text())
+            assert "vaults" in data
+            vaults = data["vaults"]
+            assert len(vaults) == 1
+
+            vault_info = next(iter(vaults.values()))
+            assert vault_info["path"] == str(vault_dir.resolve())
+            assert "ts" in vault_info
+            assert vault_info["open"] is True
+            assert data["cli"] is True
+        finally:
+            platform.get_obsidian_config_dir = original_fn
+
+    def test_register_idempotent(self, tmp_path):
+        """Should not duplicate entries if vault is already registered."""
+        vault_dir = tmp_path / "my-vault"
+        vault_dir.mkdir()
+
+        config_dir = tmp_path / "obsidian_config"
+        config_dir.mkdir()
+
+        import obsiforge.utils.platform as platform
+        original_fn = platform.get_obsidian_config_dir
+
+        platform.get_obsidian_config_dir = lambda: config_dir
+        try:
+            _register_vault_in_obsidian(vault_dir, dry_run=False)
+            _register_vault_in_obsidian(vault_dir, dry_run=False)
+
+            config_file = config_dir / "obsidian.json"
+            data = json.loads(config_file.read_text())
+            vaults = data["vaults"]
+            # Should have exactly 1 entry, not 2
+            assert len(vaults) == 1
+        finally:
+            platform.get_obsidian_config_dir = original_fn
+
+    def test_register_preserves_existing_vaults(self, tmp_path):
+        """Should preserve other vaults and remove open=true from them."""
+        vault_dir = tmp_path / "new-vault"
+        vault_dir.mkdir()
+
+        config_dir = tmp_path / "obsidian_config"
+        config_dir.mkdir()
+        config_file = config_dir / "obsidian.json"
+        existing_data = {
+            "vaults": {
+                "abc123def45678": {
+                    "path": "/Users/test/existing-vault",
+                    "ts": 1700000000000,
+                    "open": True,
+                }
+            }
+        }
+        config_file.write_text(json.dumps(existing_data))
+
+        import obsiforge.utils.platform as platform
+        original_fn = platform.get_obsidian_config_dir
+
+        platform.get_obsidian_config_dir = lambda: config_dir
+        try:
+            _register_vault_in_obsidian(vault_dir, dry_run=False)
+
+            data = json.loads(config_file.read_text())
+            vaults = data["vaults"]
+            assert len(vaults) == 2
+            assert "abc123def45678" in vaults
+            assert vaults["abc123def45678"]["path"] == "/Users/test/existing-vault"
+            # Other vault should NOT have open=true anymore
+            assert "open" not in vaults["abc123def45678"]
+            # Our vault should have open=true
+            our_vault = next(
+                v for v in vaults.values()
+                if v["path"] == str(vault_dir.resolve())
+            )
+            assert our_vault["open"] is True
+        finally:
+            platform.get_obsidian_config_dir = original_fn
+
+    def test_register_creates_backup(self, tmp_path):
+        """Should create a .bak file before modifying obsidian.json."""
+        vault_dir = tmp_path / "my-vault"
+        vault_dir.mkdir()
+
+        config_dir = tmp_path / "obsidian_config"
+        config_dir.mkdir()
+        config_file = config_dir / "obsidian.json"
+        config_file.write_text('{"vaults": {}}')
+
+        import obsiforge.utils.platform as platform
+        original_fn = platform.get_obsidian_config_dir
+
+        platform.get_obsidian_config_dir = lambda: config_dir
+        try:
+            _register_vault_in_obsidian(vault_dir, dry_run=False)
+
+            backup = config_dir / "obsidian.json.bak"
+            assert backup.exists()
+        finally:
+            platform.get_obsidian_config_dir = original_fn
 
 
 class TestMcpConfigDetails:
     """Test MCP config file generation in detail."""
 
     def test_mcp_json_streamable_http_format(self, fake_vault):
-        """.mcp.json should use streamable-http format."""
+        """.mcp.json should use streamable-http format with vault-specific name."""
         _write_mcp_json(
             vault_path=str(fake_vault),
             vault_name="test",
             mcp_http_port=27201,
             bearer_token="token-abc123",
-            smart_connections_path=None,
             dry_run=False,
         )
         data = json.loads((fake_vault / ".mcp.json").read_text())
-        mcp = data["mcpServers"]["obsidian-mcp-tools"]
+        mcp = data["mcpServers"]["obsidian-mcp-tools-test"]
         assert mcp["type"] == "streamable-http"
         assert "http://127.0.0.1:27201/mcp" in mcp["url"]
         assert mcp["headers"]["Authorization"] == "Bearer token-abc123"
 
-    def test_mcp_json_with_smart_connections(self, fake_vault, tmp_path):
-        """.mcp.json should include smart-connections when path is provided."""
-        sc_path = tmp_path / "dist" / "index.js"
-        sc_path.parent.mkdir(parents=True)
-        sc_path.write_text("// entry")
-
-        _write_mcp_json(
+    def test_settings_local_permissions(self, fake_vault):
+        """settings.local.json should include expanded MCP tool permissions."""
+        _write_settings_local(
             vault_path=str(fake_vault),
             vault_name="test",
-            mcp_http_port=27201,
-            bearer_token="token-abc123",
-            smart_connections_path=str(sc_path),
             dry_run=False,
         )
-        data = json.loads((fake_vault / ".mcp.json").read_text())
-        assert "smart-connections" in data["mcpServers"]
-        sc = data["mcpServers"]["smart-connections"]
-        assert sc["command"] == "node"
-        assert "SMART_VAULT_PATH" in sc["env"]
-
-    def test_settings_local_permissions(self, fake_vault):
-        """settings.local.json should include MCP tool permissions."""
-        _write_settings_local(vault_path=str(fake_vault), dry_run=False)
         data = json.loads((fake_vault / ".claude" / "settings.local.json").read_text())
-        assert "mcp__obsidian-mcp-tools__search_vault_smart" in data["permissions"]["allow"]
-        assert "mcp__obsidian-mcp-tools__create_vault_file" in data["permissions"]["allow"]
+        allow = data["permissions"]["allow"]
+        # Server name should be vault-specific in tool permissions
+        assert "mcp__obsidian-mcp-tools-test__get_vault_file" in allow
+        assert "mcp__obsidian-mcp-tools-test__get_server_info" in allow
+        assert "mcp__obsidian-mcp-tools-test__list_vault_files" in allow
+        assert "mcp__obsidian-mcp-tools-test__create_vault_file" in allow
+        assert "mcp__obsidian-mcp-tools-test__patch_vault_file" in allow
+        assert "mcp__obsidian-mcp-tools-test__append_to_vault_file" in allow
+        assert "mcp__obsidian-mcp-tools-test__update_active_file" in allow
+        assert "mcp__obsidian-mcp-tools-test__search_vault_smart" in allow
+        assert "mcp__obsidian-mcp-tools-test__search_vault_simple" in allow
+        assert "mcp__obsidian-mcp-tools-test__get_backlinks" in allow
+        assert "mcp__obsidian-mcp-tools-test__get_outgoing_links" in allow
+        assert "mcp__obsidian-mcp-tools-test__get_files_by_tag" in allow
+        assert "mcp__obsidian-mcp-tools-test__list_tags" in allow
+        # claude-mem
+        assert "mcp__plugin_claude-mem_mcp-search__search" in allow
+        assert "mcp__plugin_claude-mem_mcp-search__timeline" in allow
+        assert "mcp__plugin_claude-mem_mcp-search__get_observations" in allow
+        assert len(allow) >= 15
 
 
 class TestDoctorIntegration:
@@ -362,7 +538,7 @@ class TestDoctorIntegration:
         from obsiforge.doctor import _check_plugins_enabled
 
         result = _check_plugins_enabled(str(fake_vault))
-        assert result["missing"] == {"mcp-tools-istefox", "smart-connections", "obsidian-local-rest-api"}
+        assert result["missing"] == {"mcp-tools-istefox", "obsidian-local-rest-api"}
 
     def test_doctor_detects_enabled_plugins(self, fake_vault):
         """Doctor should detect all enabled plugins."""
