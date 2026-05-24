@@ -12,8 +12,12 @@ runner = CliRunner()
 
 
 def _strip_ansi(text: str) -> str:
-    """Remove ANSI escape sequences from text for assertion matching."""
-    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+    """Remove ANSI escape sequences and control characters from text."""
+    # Remove ANSI escape sequences
+    text = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    # Remove other control characters (carriage return, etc.) except newline/tab
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+    return text
 
 
 def test_version():

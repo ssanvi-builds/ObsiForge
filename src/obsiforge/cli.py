@@ -338,8 +338,10 @@ def status(
 
     if json_output:
         import json
+        import sys
 
-        console.print(json.dumps(statuses, indent=2))
+        # Use plain print to avoid Rich control characters in JSON output
+        print(json.dumps(statuses, indent=2), file=sys.stdout)
         return
 
     table = Table(title="ObsiForge Status", show_lines=True)
