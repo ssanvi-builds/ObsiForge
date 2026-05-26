@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-import re
+import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -11,14 +12,21 @@ import httpx
 from rich.console import Console
 from rich.panel import Panel
 
+from obsiforge.utils.llm_providers import is_provider_configured, load_claude_mem_settings
 from obsiforge.utils.obsidian import (
     check_port_in_use,
     find_obsidian_listening_ports,
     is_obsidian_running,
 )
 from obsiforge.utils.platform import get_claude_config_dir
-from obsiforge.utils.ports import CLAUDE_MEM_WORKER_PORT, MCP_HTTP_MAX, MCP_HTTP_RANGE, REST_API_RANGE
+from obsiforge.utils.ports import (
+    CLAUDE_MEM_WORKER_PORT,
+    MCP_HTTP_RANGE,
+    REST_API_RANGE,
+)
 from obsiforge.utils.prompt import print_error, print_success, print_warning
+from obsiforge.utils.state import load_state as _load_state
+from obsiforge.utils.state import save_state as _save_state
 
 console = Console()
 
@@ -58,6 +66,144 @@ def _check_mcp_auth(vault_path: str, bearer_token: str, mcp_port: int) -> dict[s
     except (httpx.ConnectError, httpx.TimeoutException):
         return {"auth_ok": False, "details": f"MCP Connector not responding on port {mcp_port}"}
     return {"auth_ok": False, "details": "Unexpected response"}
+
+
+def _read_istefox_config(vault_path: str) -> dict[str, Any]:
+    """Read the current bearer token and port from the istefox MCP Connector plugin.
+
+    Returns:
+        Dict with 'bearer_token' (str|None) and 'port' (int|None).
+    """
+    vault = Path(vault_path).expanduser()
+    data_json = vault / ".obsidian" / "plugins" / "mcp-tools-istefox" / "data.json"
+    if not data_json.exists():
+        return {"bearer_token": None, "port": None}
+    try:
+        config = json.loads(data_json.read_text(encoding="utf-8"))
+        return {
+            "bearer_token": config.get("mcpTransport", {}).get("bearerToken"),
+            "port": config.get("server", {}).get("port"),
+        }
+    except (json.JSONDecodeError, OSError):
+        return {"bearer_token": None, "port": None}
+
+
+def _discover_actual_mcp_port(bearer_token: str) -> int | None:
+    """Probe all candidate MCP ports to find the one that accepts this token.
+
+    The istefox plugin picks the first available port in 27200-27205 on startup,
+    so the port in data.json may not match reality when multiple vaults run.
+
+    Returns:
+        The port number that accepts the token, or None.
+    """
+    if not bearer_token:
+        return None
+    mcp_low, mcp_high = MCP_HTTP_RANGE
+    for port in range(mcp_low, mcp_high + 1):
+        if not check_port_in_use(port):
+            continue
+        auth = _check_mcp_auth("", bearer_token, port)
+        if auth.get("auth_ok"):
+            return port
+    return None
+
+
+def _sync_mcp_credentials(vault_path: str) -> dict[str, Any]:
+    """Read current credentials from istefox and discover the actual MCP port.
+
+    The istefox plugin regenerates its bearer token on Obsidian restart and
+    may bind a different port than what data.json records. This function
+    reads the plugin config and probes ports to find the real state.
+
+    Returns:
+        Dict with 'bearer_token', 'actual_port', 'config_port'.
+    """
+    istefox = _read_istefox_config(vault_path)
+    bearer_token = istefox["bearer_token"]
+    config_port = istefox["port"]
+
+    actual_port = _discover_actual_mcp_port(bearer_token) if bearer_token else None
+
+    return {
+        "bearer_token": bearer_token,
+        "actual_port": actual_port,
+        "config_port": config_port,
+    }
+
+
+def _fix_mcp_json(vault_path: str, vault_name: str, bearer_token: str, mcp_port: int) -> bool:
+    """Update .mcp.json with the correct bearer token and MCP port.
+
+    Returns:
+        True if the file was updated, False if it was already correct.
+    """
+    vault = Path(vault_path).expanduser()
+    mcp_file = vault / ".mcp.json"
+    server_name = f"obsidian-mcp-tools-{vault_name}"
+
+    if not mcp_file.exists():
+        return False
+
+    try:
+        mcp_config = json.loads(mcp_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+
+    server = mcp_config.get("mcpServers", {}).get(server_name, {})
+    current_token = server.get("headers", {}).get("Authorization", "").removeprefix("Bearer ")
+    current_url = server.get("url", "")
+    expected_url = f"http://127.0.0.1:{mcp_port}/mcp"
+
+    if current_token == bearer_token and current_url == expected_url:
+        return False
+
+    mcp_config.setdefault("mcpServers", {})
+    mcp_config["mcpServers"][server_name] = {
+        "type": "streamable-http",
+        "url": expected_url,
+        "headers": {
+            "Authorization": f"Bearer {bearer_token}",
+        },
+    }
+
+    mcp_file.write_text(json.dumps(mcp_config, indent=2) + "\n", encoding="utf-8")
+    return True
+
+
+def _try_fix_mcp_auth(vault_path: str, vault_name: str) -> dict[str, Any] | None:
+    """Attempt to fix stale MCP credentials in .mcp.json and state file.
+
+    Reads the current token and port from the istefox plugin config, probes
+    ports to find the actual MCP listener, and updates .mcp.json if needed.
+
+    Returns:
+        Updated auth_check dict on success, None if credentials unavailable.
+    """
+    creds = _sync_mcp_credentials(vault_path)
+    new_token = creds["bearer_token"]
+    new_port = creds["actual_port"] or creds["config_port"]
+    if not new_token or not new_port:
+        console.print(
+            "[dim]  Could not read current credentials from istefox plugin[/dim]"
+        )
+        return None
+
+    updated = _fix_mcp_json(vault_path, vault_name, new_token, new_port)
+    if updated:
+        state = _load_state()
+        if vault_name in state.get("vaults", {}):
+            state["vaults"][vault_name]["bearer_token"] = new_token
+            state["vaults"][vault_name]["mcp_http_port"] = new_port
+            _save_state(state)
+        print_success(f"MCP auth: auto-fixed .mcp.json (token synced, port {new_port})")
+        return {"auth_ok": True, "details": "Auto-repaired"}
+
+    console.print(
+        "[dim]  .mcp.json already up to date — "
+        "token mismatch may need manual check[/dim]"
+    )
+    return None
 
 
 def _check_plugins_enabled(vault_path: str) -> dict[str, Any]:
@@ -144,6 +290,16 @@ def _check_settings_json() -> dict[str, Any]:
     if not has_session_start:
         issues.append("missing SessionStart hook for claude-mem")
 
+    has_mcp_sync = any(
+        any(
+            "obsiforge" in h.get("command", "") or "mcp-sync" in h.get("command", "")
+            for h in group.get("hooks", [])
+        )
+        for group in hooks.get("SessionStart", [])
+    )
+    if not has_mcp_sync:
+        issues.append("missing SessionStart hook for obsiforge sync")
+
     # Check env
     env = settings.get("env", {})
     if env.get("CLAUDE_CODE_DISABLE_AUTO_MEMORY") != "1":
@@ -171,6 +327,68 @@ def _check_vault_files(vault_path: str) -> dict[str, Any]:
     if missing:
         return {"complete": False, "details": f"missing: {', '.join(missing)}"}
     return {"complete": True, "details": "all files present"}
+
+
+def _check_chroma_health(worker_port: int) -> dict[str, Any]:
+    """Check if Chroma vector store is healthy via claude-mem worker API."""
+    try:
+        resp = httpx.get(
+            f"http://localhost:{worker_port}/api/chroma/status",
+            params={"deep": "true"},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            status = data.get("status", "unknown")
+            connected = data.get("connected", False)
+            details = data.get("details", "")
+
+            if status == "healthy" and connected:
+                msg = "Chroma healthy"
+                # Try to extract latency from deep probe
+                latency = data.get("probe", {}).get("queryLatencyMs")
+                if latency:
+                    msg += f" (query: {latency}ms)"
+                return {"healthy": True, "details": msg}
+
+            return {"healthy": False, "details": f"{details or status}"}
+    except (httpx.ConnectError, httpx.TimeoutException):
+        return {"healthy": False, "details": "Chroma status endpoint not reachable"}
+    return {"healthy": False, "details": "unexpected Chroma status response"}
+
+
+def _check_sqlite_health() -> dict[str, Any]:
+    """Check if the claude-mem SQLite database is accessible and writable."""
+    db_path = Path.home() / ".claude-mem" / "claude-mem.db"
+
+    if not db_path.exists():
+        return {
+            "healthy": False,
+            "details": "not found (will be created on next worker start)",
+        }
+
+    if not os.access(db_path, os.R_OK):
+        return {"healthy": False, "details": "not readable (permission denied)"}
+
+    if not os.access(db_path, os.W_OK):
+        return {"healthy": False, "details": "not writable (read-only)"}
+
+    size = db_path.stat().st_size
+    if size == 0:
+        return {"healthy": False, "details": "empty (0 bytes)"}
+
+    # Quick integrity check via sqlite3 CLI if available
+    try:
+        result = subprocess.run(
+            ["sqlite3", str(db_path), "PRAGMA integrity_check;"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and "ok" in result.stdout.lower():
+            return {"healthy": True, "details": f"OK ({size // 1024}KB)"}
+        return {"healthy": False, "details": f"integrity check failed: {result.stdout.strip()}"}
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        # sqlite3 CLI not available, just report based on file checks
+        return {"healthy": True, "details": f"accessible ({size // 1024}KB)"}
 
 
 def run_doctor(
@@ -321,10 +539,15 @@ def run_doctor(
                         print_success(f"MCP auth: {auth_check['details']}")
                     else:
                         print_error(f"MCP auth: {auth_check['details']}")
-                        console.print(
-                            "[dim]  Fix: Update bearer token in .mcp.json "
-                            "to match plugin settings[/dim]"
-                        )
+                        if fix:
+                            repaired = _try_fix_mcp_auth(vault_path, vault_name)
+                            if repaired:
+                                auth_check = repaired
+                        else:
+                            console.print(
+                                "[dim]  Fix: Run 'obsiforge doctor --fix' to "
+                                "auto-sync token and port[/dim]"
+                            )
                     checks.append(("MCP auth", auth_check))
             else:
                 if obsidian_running:
@@ -371,21 +594,79 @@ def run_doctor(
 
     # 4. claude-mem
     console.rule("[bold]claude-mem[/bold]")
+    # Read actual worker port from claude-mem settings (may differ from default)
+    mem_settings = load_claude_mem_settings()
+    worker_port = int(
+        mem_settings.get("CLAUDE_MEM_WORKER_PORT", CLAUDE_MEM_WORKER_PORT)
+    )
     claude_mem_ok = False
     try:
-        resp = httpx.get(f"http://localhost:{CLAUDE_MEM_WORKER_PORT}/health", timeout=5)
+        resp = httpx.get(f"http://localhost:{worker_port}/health", timeout=5)
         if resp.status_code == 200:
             print_success("claude-mem worker: healthy")
             claude_mem_ok = True
         else:
             print_warning(f"claude-mem worker: unexpected status {resp.status_code}")
     except (httpx.ConnectError, httpx.TimeoutException):
-        print_error(f"claude-mem worker: not responding on port {CLAUDE_MEM_WORKER_PORT}")
+        print_error(f"claude-mem worker: not responding on port {worker_port}")
         console.print(
             "[dim]  Fix: Run 'npx claude-mem start' or "
             "restart your Claude Code session[/dim]"
         )
     checks.append(("claude-mem", {"running": claude_mem_ok}))
+
+    # Chroma health (only if worker is running)
+    if claude_mem_ok:
+        chroma_check = _check_chroma_health(worker_port)
+        if chroma_check["healthy"]:
+            print_success(f"Chroma: {chroma_check['details']}")
+        else:
+            print_error(f"Chroma: {chroma_check['details']}")
+            console.print(
+                "[dim]  Fix: Check uvx and Python 3.13 are installed; "
+                "restart Claude Code session to re-spawn chroma-mcp[/dim]"
+            )
+        checks.append(("Chroma", chroma_check))
+    else:
+        console.print("[dim]  Skipping Chroma check (worker not running)[/dim]")
+
+    # SQLite health
+    sqlite_check = _check_sqlite_health()
+    if sqlite_check["healthy"]:
+        print_success(f"SQLite DB: {sqlite_check['details']}")
+    else:
+        print_error(f"SQLite DB: {sqlite_check['details']}")
+        if fix and not sqlite_check["healthy"]:
+            db_path = Path.home() / ".claude-mem" / "claude-mem.db"
+            if db_path.exists() and not os.access(db_path, os.W_OK):
+                try:
+                    db_path.chmod(db_path.stat().st_mode | 0o200)
+                    print_success("Fixed: SQLite DB write permission restored")
+                    sqlite_check = _check_sqlite_health()
+                except OSError:
+                    console.print(
+                        "[dim]  Fix: Check file permissions "
+                        "on ~/.claude-mem/claude-mem.db[/dim]"
+                    )
+            elif not db_path.exists():
+                console.print(
+                    "[dim]  Fix: Run 'npx claude-mem start' "
+                    "to create the database[/dim]"
+                )
+    checks.append(("SQLite DB", sqlite_check))
+
+    # LLM provider
+    provider_result = is_provider_configured()
+    if provider_result["configured"]:
+        print_success(f"LLM provider: {provider_result['details']}")
+        checks.append(("LLM provider", {"valid": True, "details": provider_result["details"]}))
+    else:
+        print_error(f"LLM provider: {provider_result['details']}")
+        console.print(
+            "[dim]  Fix: Run 'obsiforge init' to configure, "
+            "or edit ~/.claude-mem/settings.json manually[/dim]"
+        )
+        checks.append(("LLM provider", {"valid": False, "details": provider_result["details"]}))
 
     # Summary
     console.rule("[bold]Summary[/bold]")
@@ -393,7 +674,7 @@ def run_doctor(
         1 for _, c in checks
         if c.get("valid") or c.get("complete")
         or c.get("auth_ok") or c.get("in_use")
-        or c.get("running")
+        or c.get("running") or c.get("healthy")
     )
     total = len(checks)
     issue_count = total - ok_count

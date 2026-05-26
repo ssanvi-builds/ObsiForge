@@ -10,6 +10,7 @@ import httpx
 from rich.console import Console
 from rich.table import Table
 
+from obsiforge.utils.llm_providers import is_provider_configured, load_claude_mem_settings
 from obsiforge.utils.obsidian import check_port_in_use
 from obsiforge.utils.platform import get_claude_config_dir
 from obsiforge.utils.ports import CLAUDE_MEM_WORKER_PORT
@@ -18,15 +19,25 @@ from obsiforge.utils.prompt import print_step, print_success, print_warning
 console = Console()
 
 
+def _get_claude_mem_worker_port() -> int:
+    """Read actual worker port from claude-mem settings, with fallback."""
+    settings = load_claude_mem_settings()
+    return int(settings.get("CLAUDE_MEM_WORKER_PORT", CLAUDE_MEM_WORKER_PORT))
+
+
 def _check_claude_mem_worker() -> dict[str, Any]:
     """Check if claude-mem worker is running."""
+    port = _get_claude_mem_worker_port()
     try:
-        resp = httpx.get(f"http://localhost:{CLAUDE_MEM_WORKER_PORT}/health", timeout=5)
+        resp = httpx.get(f"http://localhost:{port}/health", timeout=5)
         if resp.status_code == 200:
             return {"status": "running", "details": "worker healthy"}
     except (httpx.ConnectError, httpx.TimeoutException):
         pass
-    return {"status": "stopped", "details": f"worker not responding on port {CLAUDE_MEM_WORKER_PORT}"}
+    return {
+        "status": "stopped",
+        "details": f"worker not responding on port {port}",
+    }
 
 
 def _check_mcp_http(port: int) -> dict[str, Any]:
@@ -132,6 +143,14 @@ def _check_hooks() -> dict[str, Any]:
     return {"status": "partial", "details": f"missing: {', '.join(missing)}"}
 
 
+def _check_llm_provider() -> dict[str, Any]:
+    """Check if claude-mem has an LLM provider configured."""
+    result = is_provider_configured()
+    if result["configured"]:
+        return {"status": "ok", "details": result["details"]}
+    return {"status": "partial", "details": result["details"]}
+
+
 def run(
     vault_name: str,
     vault_path: str,
@@ -175,6 +194,7 @@ def run(
 
     checks = {
         "claude-mem worker": _check_claude_mem_worker(),
+        "LLM provider": _check_llm_provider(),
         "MCP Connector": _check_mcp_http(mcp_port),
         "Local REST API": (
             _check_rest_api(rest_port, api_key)
@@ -244,6 +264,7 @@ def get_status() -> dict[str, dict[str, str]]:
 
     return {
         "claude-mem": mem_check,
+        "LLM provider": _check_llm_provider(),
         "obsidian-mcp-tools": {
             "status": "ok" if settings_check["status"] == "ok" else "unknown",
             "details": "check with 'obsiforge doctor'",

@@ -363,6 +363,60 @@ def install_claude_mem(non_interactive: bool = False, dry_run: bool = False) -> 
     )
 
 
+# ─── Python 3.13 (for chroma-mcp) ──────────────────────────────────
+
+
+def install_python313(non_interactive: bool = False, dry_run: bool = False) -> bool:
+    """Install Python 3.13 for chroma-mcp (claude-mem semantic search)."""
+    # Check if already available
+    try:
+        result = subprocess.run(
+            ["python3.13", "--version"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    if dry_run:
+        console.print("  [dim]Would install Python 3.13 via uv[/dim]")
+        return True
+
+    if not _confirm_install("Python 3.13 (required by chroma-mcp)", non_interactive):
+        return False
+
+    # Try uv first (cross-platform, fast)
+    if find_executable("uv"):
+        return _run_cmd(
+            ["uv", "python", "install", "3.13"],
+            "Python 3.13 via uv",
+            timeout=120,
+        )
+
+    # Platform fallbacks
+    plat = get_platform()
+    if plat == "macos":
+        brew = get_brew_path()
+        if brew:
+            return _run_cmd([str(brew), "install", "python@3.13"], "Python 3.13 via Homebrew")
+    elif plat == "linux":
+        pkg_mgr = detect_package_manager()
+        if pkg_mgr == "dnf":
+            return _run_cmd(["sudo", "dnf", "install", "-y", "python3.13"], "Python 3.13 via dnf")
+        if pkg_mgr == "apt":
+            console.print("  [dim]On Ubuntu/Debian, add deadsnakes PPA first:[/dim]")
+            console.print(
+                "  [dim]sudo add-apt-repository ppa:deadsnakes/ppa "
+                "&& sudo apt install python3.13[/dim]"
+            )
+            return False
+
+    console.print("  [yellow]⚠[/yellow] Cannot install Python 3.13 automatically.")
+    console.print("  Install manually: https://python.org or `uv python install 3.13`")
+    return False
+
+
 # ─── Installer Registry ───────────────────────────────────────────
 
 INSTALLERS: dict[str, Callable[..., bool]] = {
@@ -372,4 +426,5 @@ INSTALLERS: dict[str, Callable[..., bool]] = {
     "Claude Code": install_claude,
     "claude-mem": install_claude_mem,
     "Obsidian": install_obsidian,
+    "Python 3.13": install_python313,
 }

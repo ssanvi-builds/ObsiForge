@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import socket
-import subprocess
 from pathlib import Path
 
 # Default port ranges for ObsiForge components
@@ -13,7 +12,7 @@ MCP_HTTP_BASE = 27200  # MCP Connector HTTP ports start here
 MCP_HTTP_MAX = 27210  # MCP Connector port range upper bound
 MCP_HTTP_RANGE = (27200, 27210)  # MCP Connector port range
 REST_API_RANGE = (27100, 27199)  # Local REST API port range
-CLAUDE_MEM_WORKER_PORT = 37701  # claude-mem worker default port
+CLAUDE_MEM_WORKER_PORT = 37700  # claude-mem worker default port
 
 
 def is_port_available(port: int, host: str = "127.0.0.1") -> bool:

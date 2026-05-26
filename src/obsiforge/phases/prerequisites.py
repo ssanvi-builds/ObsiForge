@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import re
+import shutil
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
@@ -27,10 +30,16 @@ MIN_NODE_VERSION = 18
 MIN_PYTHON_VERSION = (3, 12)
 
 # Hard requirements that block init if missing
-HARD_REQUIREMENTS = ["Node.js >= 18", "Python >= 3.12", "Obsidian", "Claude Code", "uv", "git"]
+HARD_REQUIREMENTS = [
+    "Node.js >= 18", "Python >= 3.12", "Python 3.13 (chroma-mcp)",
+    "Obsidian", "Claude Code", "uv", "uvx (chroma-mcp)", "git",
+]
 
 # Tools that can be auto-installed
-AUTO_INSTALLABLE = ["Node.js >= 18", "Obsidian", "Claude Code", "uv", "git", "claude-mem"]
+AUTO_INSTALLABLE = [
+    "Node.js >= 18", "Obsidian", "Claude Code", "uv",
+    "git", "claude-mem", "Python 3.13 (chroma-mcp)",
+]
 
 # Map check names to installer function names in INSTALLERS
 INSTALLER_MAP = {
@@ -38,8 +47,10 @@ INSTALLER_MAP = {
     "Obsidian": "Obsidian",
     "Claude Code": "Claude Code",
     "uv": "uv",
+    "uvx (chroma-mcp)": "uv",
     "git": "git",
     "claude-mem": "claude-mem",
+    "Python 3.13 (chroma-mcp)": "Python 3.13",
 }
 
 
@@ -106,23 +117,17 @@ def _check_obsidian() -> tuple[bool, str]:
     """Check if Obsidian is installed."""
     path = get_obsidian_path()
     if path:
-        return True, f"found at {path}"
-    # Obsidian might be running without being in PATH
-    try:
-        result = subprocess.run(
-            ["pgrep", "-x", "Obsidian"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
+        path_str = str(path)
+        # Flatpak returns a special identifier, not a real path
+        if path_str.startswith("flatpak:"):
+            return True, f"installed via Flatpak ({path_str})"
+        if "running" in path_str:
             return True, "running (found process)"
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
+        return True, f"found at {path}"
     plat = get_platform()
     install_hints = {
         "macos": "Homebrew",
-        "linux": "snap",
+        "linux": "snap/flatpak/AppImage/deb",
         "windows": "winget",
     }
     install_hint = install_hints.get(plat, "package manager")
@@ -167,6 +172,65 @@ def _check_claude_mem() -> tuple[bool, str]:
     return False, "not installed — will install in Phase 1"
 
 
+def _check_python313() -> tuple[bool, str]:
+    """Check if Python 3.13 is available for chroma-mcp.
+
+    Reads CLAUDE_MEM_PYTHON_VERSION from claude-mem settings; if the user
+    has overridden the default (3.13), this check is skipped.
+    """
+    settings_path = Path.home() / ".claude-mem" / "settings.json"
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+            configured_version = settings.get("CLAUDE_MEM_PYTHON_VERSION", "3.13")
+            if configured_version != "3.13":
+                return True, f"skipped (CLAUDE_MEM_PYTHON_VERSION={configured_version})"
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Try python3.13 directly
+    try:
+        result = subprocess.run(
+            ["python3.13", "--version"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            version = result.stdout.strip()
+            return True, f"version {version}"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Fallback: check uv managed installations
+    try:
+        result = subprocess.run(
+            ["uv", "python", "list"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if "3.13" in result.stdout:
+            return True, "available via uv"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    return False, "not found — install via `uv python install 3.13`"
+
+
+def _check_uvx() -> tuple[bool, str]:
+    """Check if uvx is available (required to run chroma-mcp)."""
+    uvx_path = shutil.which("uvx")
+    if not uvx_path:
+        return False, "not found — install uv from https://astral.sh/uv"
+
+    try:
+        result = subprocess.run(
+            ["uvx", "--version"],
+            capture_output=True, text=True, timeout=10,
+        )
+        version = (result.stdout + result.stderr).strip()
+        return True, f"found at {uvx_path} {version}"
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return True, f"found at {uvx_path}"
+
+
 def run(
     vault_name: str,
     vault_path: str,
@@ -189,9 +253,11 @@ def run(
     checks = [
         ("Node.js >= 18", _check_node),
         ("Python >= 3.12", _check_python),
+        ("Python 3.13 (chroma-mcp)", _check_python313),
         ("Obsidian", _check_obsidian),
         ("Claude Code", _check_claude),
         ("uv", _check_uv),
+        ("uvx (chroma-mcp)", _check_uvx),
         ("git", _check_git),
         ("claude-mem", _check_claude_mem),
     ]

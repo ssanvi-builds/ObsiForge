@@ -4,8 +4,10 @@ import json
 from unittest.mock import MagicMock, patch
 
 from obsiforge.doctor import (
+    _check_chroma_health,
     _check_plugins_enabled,
     _check_settings_json,
+    _check_sqlite_health,
     _check_vault_files,
     _check_workspace_json,
 )
@@ -19,14 +21,16 @@ class TestIsObsidianRunning:
     """Tests for is_obsidian_running."""
 
     def test_obsidian_running(self):
-        with patch("obsiforge.utils.obsidian.subprocess.run") as mock_run:
+        with patch("obsiforge.utils.obsidian.subprocess.run") as mock_run, \
+             patch("obsiforge.utils.obsidian.get_platform", return_value="macos"):
             mock_run.return_value = MagicMock(returncode=0, stdout="12345\n")
             result = is_obsidian_running()
             assert result["running"] is True
             assert "12345" in result["pids"]
 
     def test_obsidian_not_running(self):
-        with patch("obsiforge.utils.obsidian.subprocess.run") as mock_run:
+        with patch("obsiforge.utils.obsidian.subprocess.run") as mock_run, \
+             patch("obsiforge.utils.obsidian.get_platform", return_value="macos"):
             mock_run.return_value = MagicMock(returncode=1, stdout="")
             result = is_obsidian_running()
             assert result["running"] is False
@@ -140,12 +144,35 @@ class TestCheckSettingsJson:
         settings = config_dir / "settings.json"
         settings.write_text(json.dumps({
             "mcpServers": {"claude-mem": {}},
-            "hooks": {"SessionStart": [{"hooks": [{"command": "claude-mem"}]}]},
+            "hooks": {
+                "SessionStart": [
+                    {"hooks": [
+                        {"command": "npx claude-mem start"},
+                        {"command": "bash /home/user/.claude/hooks/mcp-sync.sh"},
+                    ]}
+                ],
+            },
             "env": {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
         }))
         with patch("obsiforge.doctor.get_claude_config_dir", return_value=config_dir):
             result = _check_settings_json()
             assert result["valid"] is True
+
+    def test_missing_mcp_sync_hook(self, tmp_path):
+        config_dir = tmp_path / ".claude"
+        config_dir.mkdir()
+        settings = config_dir / "settings.json"
+        settings.write_text(json.dumps({
+            "mcpServers": {"claude-mem": {}},
+            "hooks": {
+                "SessionStart": [{"hooks": [{"command": "npx claude-mem start"}]}],
+            },
+            "env": {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
+        }))
+        with patch("obsiforge.doctor.get_claude_config_dir", return_value=config_dir):
+            result = _check_settings_json()
+            assert result["valid"] is False
+            assert "obsiforge sync" in result["details"]
 
     def test_missing_settings(self, tmp_path):
         config_dir = tmp_path / ".claude"
@@ -154,3 +181,69 @@ class TestCheckSettingsJson:
             result = _check_settings_json()
             assert result["valid"] is False
             assert "not found" in result["details"]
+
+
+class TestCheckChromaHealth:
+    """Tests for _check_chroma_health."""
+
+    def test_chroma_healthy(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "status": "healthy",
+            "connected": True,
+            "details": "chroma-mcp is responding to tool calls",
+        }
+        with patch("obsiforge.doctor.httpx.get", return_value=mock_resp):
+            result = _check_chroma_health(37700)
+            assert result["healthy"] is True
+
+    def test_chroma_unhealthy(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "status": "unhealthy",
+            "connected": False,
+            "details": "chroma-mcp health check failed",
+        }
+        with patch("obsiforge.doctor.httpx.get", return_value=mock_resp):
+            result = _check_chroma_health(37700)
+            assert result["healthy"] is False
+
+    def test_chroma_connection_failed(self):
+        import httpx
+        with patch("obsiforge.doctor.httpx.get", side_effect=httpx.ConnectError("refused")):
+            result = _check_chroma_health(37700)
+            assert result["healthy"] is False
+            assert "not reachable" in result["details"]
+
+
+class TestCheckSqliteHealth:
+    """Tests for _check_sqlite_health."""
+
+    def test_db_exists_and_healthy(self, tmp_path, monkeypatch):
+        db_path = tmp_path / ".claude-mem" / "claude-mem.db"
+        db_path.parent.mkdir(parents=True)
+        db_path.write_bytes(b"\x00" * 2048)  # Non-empty fake DB
+        db_path.chmod(0o644)
+        monkeypatch.setattr("obsiforge.doctor.Path.home", lambda: tmp_path)
+        # sqlite3 CLI may not be available, test file-based check
+        with patch("obsiforge.doctor.subprocess.run", side_effect=FileNotFoundError):
+            result = _check_sqlite_health()
+            assert result["healthy"] is True
+
+    def test_db_missing(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("obsiforge.doctor.Path.home", lambda: tmp_path)
+        result = _check_sqlite_health()
+        assert result["healthy"] is False
+        assert "not found" in result["details"]
+
+    def test_db_readonly(self, tmp_path, monkeypatch):
+        db_path = tmp_path / ".claude-mem" / "claude-mem.db"
+        db_path.parent.mkdir(parents=True)
+        db_path.write_bytes(b"\x00" * 2048)
+        db_path.chmod(0o444)  # Read-only
+        monkeypatch.setattr("obsiforge.doctor.Path.home", lambda: tmp_path)
+        result = _check_sqlite_health()
+        assert result["healthy"] is False
+        assert "writable" in result["details"]

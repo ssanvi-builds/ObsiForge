@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import subprocess
 from pathlib import Path
 
 
@@ -91,10 +92,21 @@ def get_git_path() -> Path | None:
 def get_obsidian_path() -> Path | None:
     """Find the Obsidian app executable.
 
-    On macOS, checks common install locations.
-    On Linux, checks snap/flatpak/AppImage paths.
+    Checks PATH first, then platform-specific install locations.
+    On macOS, checks /Applications.
+    On Linux, checks deb/rpm/AppImage/snap/flatpak paths.
     On Windows, checks Program Files.
     """
+    # Try PATH first (works for any install method)
+    from_path = find_executable("obsidian")
+    if from_path:
+        return from_path
+
+    # Try obsidian-bin (AUR package name)
+    from_path_bin = find_executable("obsidian-bin")
+    if from_path_bin:
+        return from_path_bin
+
     plat = get_platform()
     if plat == "macos":
         app_path = Path("/Applications/Obsidian.app")
@@ -102,19 +114,74 @@ def get_obsidian_path() -> Path | None:
             return app_path
     elif plat == "linux":
         for candidate in [
-            Path.home() / ".local" / "bin" / "obsidian",
-            Path("/snap/bin/obsidian"),
+            # deb package (symlink)
             Path("/usr/bin/obsidian"),
+            # deb package (actual binary)
+            Path("/opt/Obsidian/obsidian"),
+            # rpm package (Fedora/openSUSE)
+            Path("/usr/lib64/obsidian/obsidian"),
+            # Snap
+            Path("/snap/bin/obsidian"),
+            # User-local bin (symlinks, AppImage wrappers)
+            Path.home() / ".local" / "bin" / "obsidian",
+            # Common AppImage locations
+            Path.home() / "Applications" / "Obsidian.AppImage",
+            Path.home() / "Applications" / "obsidian.AppImage",
+            Path.home() / "Downloads" / "Obsidian.AppImage",
+            # AUR obsidian-bin
+            Path("/usr/bin/obsidian-bin"),
         ]:
             if candidate.exists():
                 return candidate
+
+        # Flatpak: check if installed but not in PATH
+        try:
+            result = subprocess.run(
+                ["flatpak", "list", "--app", "--columns=application"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0 and "obsidian" in result.stdout.lower():
+                return Path("flatpak:md.obsidian.Obsidian")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
     elif plat == "windows":
+        local_app = os.environ.get("LOCALAPPDATA", "")
+        program_files = os.environ.get("ProgramFiles", "C:/Program Files")  # noqa: SIM112
+        program_files_x86 = os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")  # noqa: SIM112
         for candidate in [
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Obsidian" / "Obsidian.exe",
-            Path("C:/Program Files/Obsidian/Obsidian.exe"),
+            # User install (most common — Electron apps install here)
+            Path(local_app) / "Obsidian" / "Obsidian.exe",
+            # System-wide install
+            Path(program_files) / "Obsidian" / "Obsidian.exe",
+            # 32-bit on 64-bit system
+            Path(program_files_x86) / "Obsidian" / "Obsidian.exe",
         ]:
             if candidate.exists():
                 return candidate
+
+    # Last resort: check if Obsidian is running (cross-platform)
+    if plat == "windows":
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq Obsidian.exe"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if "Obsidian.exe" in result.stdout:
+                return Path("running (found process, path unknown)")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+    else:
+        try:
+            result = subprocess.run(
+                ["pgrep", "-x", "obsidian"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                return Path("running (found process, path unknown)")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
     return None
 
 

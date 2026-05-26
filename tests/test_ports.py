@@ -11,9 +11,16 @@ from obsiforge.utils.ports import (
 
 
 def test_is_port_available_unused():
-    """A high unused port should be available."""
-    # Use a very high port that's extremely unlikely to be in use
-    assert is_port_available(59999)
+    """An unbound port should be available."""
+    # Bind to port 0 to get an ephemeral port, then release it
+    # and verify it becomes available again
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen(1)
+        port = s.getsockname()[1]
+        assert not is_port_available(port)
+    # After closing, the port should be available
+    assert is_port_available(port)
 
 
 def test_is_port_available_in_use():

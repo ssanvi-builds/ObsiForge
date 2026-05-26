@@ -22,11 +22,36 @@ Then enable 2 plugins in Obsidian Settings. That's it. You get:
 
 ---
 
-## 30-Second Install
+## Installation
+
+### Prerequisites
+
+| Requirement | Minimum Version | Auto-installed? |
+|-------------|----------------|:---:|
+| Python | 3.12+ | No — verify only |
+| Node.js | 18+ | Yes (via fnm) |
+| Obsidian | latest | Yes |
+| Claude Code | latest | Yes (via npm) |
+| uv | latest | Yes |
+| git | latest | Yes |
+| claude-mem | latest | Yes (via `npx claude-mem`) |
+
+Python is **verified but never auto-installed**. Manage it via pyenv, conda, or your preferred method.
+
+### macOS
 
 ```bash
-# Install
+# Option 1: Install via uv (recommended)
 uv tool install git+https://github.com/ssanvi-builds/ObsiForge
+
+# Option 2: Install via pipx
+pipx install git+https://github.com/ssanvi-builds/ObsiForge
+
+# Option 3: Clone and develop
+git clone https://github.com/ssanvi-builds/ObsiForge.git
+cd ObsiForge
+uv sync
+uv run obsiforge init --name work --path ~/obsidian-vaults/work
 
 # Set up your vault (auto-installs missing prerequisites)
 obsiforge init --name work --path ~/obsidian-vaults/work --auto-install
@@ -37,7 +62,51 @@ obsiforge init --name work --path ~/obsidian-vaults/work --auto-install
 cd ~/obsidian-vaults/work && claude
 ```
 
-**Requirements:** Python >= 3.12 (verify only — manage via pyenv/conda). Other prerequisites (Node.js, Obsidian, uv, git, Claude Code) are auto-installed with `--auto-install`.
+### Linux
+
+```bash
+# Install
+uv tool install git+https://github.com/ssanvi-builds/ObsiForge
+
+# Set up your vault
+obsiforge init --name work --path ~/obsidian-vaults/work --auto-install
+
+# If Obsidian isn't installed, auto-install uses snap:
+# sudo snap install obsidian
+# Or download manually from https://obsidian.md/download
+
+# Enable community plugins, then:
+cd ~/obsidian-vaults/work && claude
+```
+
+### Windows
+
+```powershell
+# Install
+uv tool install git+https://github.com/ssanvi-builds/ObsiForge
+
+# Set up your vault
+obsiforge init --name work --path "%USERPROFILE%\obsidian-vaults\work" --auto-install
+
+# If Obsidian isn't installed, auto-install uses winget:
+# winget install Obsidian.Obsidian
+
+# Enable community plugins, then:
+cd "%USERPROFILE%\obsidian-vaults\work" && claude
+```
+
+### Non-interactive / CI
+
+```bash
+# Hands-free: installs everything without prompting
+obsiforge init --name work --path ~/obsidian-vaults/work -y -a
+
+# With Gemini API key (skips interactive provider prompt)
+obsiforge init --name work --path ~/obsidian-vaults/work --gemini-key AIzaSy...
+
+# Dry-run: preview changes without writing files
+obsiforge init --name work --path ~/obsidian-vaults/work --dry-run
+```
 
 ## Before / After
 
@@ -61,12 +130,16 @@ $ obsiforge init --name work --path ~/obsidian-vaults/work
 │ One-command Claude + Obsidian + Memory integration                   │
 ╰──────────────────────────────────────────────────────────────────────╯
 ──────────────────────── Prerequisites ────────────────────────────────
-  ✓ Node.js 20.x
+  ✓ Node.js 26.x
   ✓ Python 3.13
   ✓ Obsidian
   ✓ Claude Code
+  ✓ uv
+  ✓ git
+  ✓ claude-mem
 ─────────────────────────── claude-mem ────────────────────────────────
   ✓ claude-mem plugin installed
+  ✓ LLM provider configured: Gemini (key: ...7890)
   ✓ SessionStart hook configured
   ✓ Stop hook configured
 ─────────────────────────── Vault setup ───────────────────────────────
@@ -77,11 +150,12 @@ $ obsiforge init --name work --path ~/obsidian-vaults/work
   ✓ Community plugins configured (2/2)
   ✓ REST API configured (port 27124)
   ✓ MCP Connector configured (port 27200)
-─────────────────────── MCP configuration ────────────────────────────
+─────────────────────── MCP configuration ──────────────────────────────
   ✓ .mcp.json written
   ✓ settings.local.json written
 ────────────────────────── Verification ──────────────────────────────
   ✓ claude-mem worker: healthy
+  ✓ LLM provider: Gemini (key: ...7890)
   ✓ MCP Connector: responding on port 27200
   ✓ REST API: responding on port 27124
   ✓ All vault files present
@@ -187,9 +261,9 @@ Ports are auto-allocated and tracked in `~/.claude/obsiforge-state.json` to prev
 MCP Connector includes **Transformers.js** for semantic search — runs entirely inside the Obsidian plugin, no separate server needed.
 
 ```
-"What did we decide about the database?"  →  Finds decisiones/base-de-datos.md
+"What did we decide about the database?"  →  Finds decisions/database-choices.md
 "how to avoid layout shifts"               →  Finds core-web-vitals.md (CLS section)
-"comunicación sin acoplamiento"             →  Finds event-driven-architecture.md
+"event-driven decoupled communication"    →  Finds event-driven-architecture.md
 ```
 
 Search hierarchy:
@@ -226,6 +300,16 @@ Options:
 - `--dry-run` — Preview changes without writing files
 - `--non-interactive, -y` — Accept all defaults
 - `--auto-install, -a` — Automatically install missing prerequisites
+- `--gemini-key` — Gemini API key for claude-mem LLM backend (skips interactive prompt)
+
+### `obsiforge add-vault`
+
+```bash
+obsiforge add-vault work ~/obsidian-vaults/work
+obsiforge add-vault personal ~/obsidian-vaults/personal --dry-run
+```
+
+Adds a new vault without redoing global setup (claude-mem and global settings are left unchanged). Only runs vault-specific phases 2–4.
 
 ### `obsiforge doctor`
 
@@ -235,7 +319,7 @@ obsiforge doctor --fix        # Attempt auto-repair
 obsiforge doctor --vault work # Check specific vault
 ```
 
-Checks (9 total):
+Checks (10 total):
 - Obsidian process running (cross-platform: pgrep/tasklist)
 - Global `settings.json` structure (mcpServers, hooks, env)
 - Vault files present (CLAUDE.md, MEMORY.md, user-preferences.md, .mcp.json, plugins)
@@ -244,6 +328,7 @@ Checks (9 total):
 - MCP Connector responding + auth
 - REST API responding (detects actual port if different from expected)
 - claude-mem worker healthy
+- LLM provider configured (Gemini, OpenRouter, or Anthropic)
 
 ### `obsiforge status`
 
@@ -267,6 +352,7 @@ Common fixes:
 - **MCP auth failed** → Bearer token changed; run `obsiforge init` again or update `.mcp.json`
 - **MCP auth failed on non-active vault** → Expected: Obsidian runs one vault at a time. Switch vaults in Obsidian and re-check.
 - **claude-mem worker down** → Run `npx claude-mem start` or restart Claude Code
+- **LLM provider not configured** → Run `obsiforge init` to configure, or edit `~/.claude-mem/settings.json` manually (set `CLAUDE_MEM_PROVIDER`, `CLAUDE_MEM_GEMINI_API_KEY`, etc.)
 - **Plugin download 403** → Run `gh auth login` first, or set `GITHUB_TOKEN`
 
 ### MCP servers not connecting
@@ -279,10 +365,18 @@ Common fixes:
 
 ObsiForge auto-allocates ports starting from:
 - REST API: 27124
-- MCP HTTP: 27200
-- claude-mem worker: 37701
+- MCP HTTP: 27200 (range 27200–27210)
+- claude-mem worker: 37700
 
 If ports are in use, it finds the next available one. Port reservations are tracked in `~/.claude/obsiforge-state.json` to prevent collisions between vaults.
+
+### "Community plugins" toggle keeps turning off
+
+This is expected on first launch. After running `obsiforge init`:
+1. Open Obsidian → Settings → Community plugins
+2. Click **Turn on community plugins** (trust dialog)
+3. Enable each plugin toggle (MCP Tools, Local REST API)
+4. Restart Obsidian or reload (Cmd+R on macOS)
 
 ## Auto-Install
 
@@ -298,17 +392,15 @@ obsiforge init --name work --path ~/vaults/work -y -a
 
 ### Platform Support
 
-| Tool | macOS (brew) | macOS (no brew) | Linux | Windows |
-|------|-------------|-----------------|-------|---------|
-| Node.js | fnm → node LTS | fnm (curl) → node LTS | fnm (curl) → node LTS | fnm (winget) → node LTS |
+| Tool | macOS (Homebrew) | macOS (no Homebrew) | Linux | Windows |
+|------|-----------------|---------------------|-------|---------|
+| Node.js | fnm → Node LTS | fnm (curl) → Node LTS | fnm (curl) → Node LTS | fnm (winget) → Node LTS |
 | Obsidian | `brew install --cask obsidian` | Manual download | `snap install obsidian` | `winget install Obsidian.Obsidian` |
 | uv | `brew install uv` | curl install script | curl install script | `pip install uv` |
 | git | `brew install git` | `xcode-select --install` | apt/dnf/pacman | `winget install Git.Git` |
 | Claude Code | `npm install -g @anthropic-ai/claude-code` | same | same | same |
-| claude-mem | `claude plugin install claude-mem` | same | same | same |
+| claude-mem | `npx claude-mem --yes` | same | same | same |
 | Python | Verify only (3.12+) | same | same | same |
-
-> Python is verified but never auto-installed. Manage it via pyenv, conda, or your preferred method.
 
 ## Architecture
 
@@ -319,31 +411,58 @@ obsiforge/
 │   ├── doctor.py                 # Health checks + auto-repair
 │   ├── phases/
 │   │   ├── prerequisites.py      # Phase 0: Check + auto-install deps
-│   │   ├── claude_mem.py         # Phase 1: Install claude-mem
-│   │   ├── vault.py              # Phase 2: Create/configure vault + download plugins
+│   │   ├── claude_mem.py         # Phase 1: Install claude-mem + hooks
+│   │   ├── vault.py              # Phase 2: Create/configure vault + plugins
 │   │   ├── mcp_config.py         # Phase 3: Write MCP configs
 │   │   └── verify.py             # Phase 4: Health checks
 │   ├── utils/
 │   │   ├── crypto.py             # API key + bearer token generation
 │   │   ├── installer.py          # Platform-aware prerequisite installer
+│   │   ├── llm_providers.py      # claude-mem LLM provider config (Gemini, OpenRouter, Anthropic)
+│   │   ├── obsidian.py           # Cross-platform Obsidian detection + port discovery
 │   │   ├── plugin_downloader.py  # Download plugins from GitHub releases
 │   │   ├── ports.py              # Port allocation + collision prevention
+│   │   ├── prompt.py             # Rich console helpers + interactive prompts
 │   │   ├── settings_merge.py     # Safe JSON merge with atomic writes
 │   │   ├── state.py              # Phase completion tracking
-│   │   ├── platform.py           # Cross-platform path + pkg manager detection
-│   │   └── prompt.py             # Rich console helpers
+│   │   └── platform.py           # Cross-platform path + executable detection
 ├── tests/
-│   ├── conftest.py              # Shared fixtures (mock Obsidian interactions)
-│   ├── test_cli.py              # CLI argument parsing
-│   ├── test_crypto.py           # API key + bearer token generation
-│   ├── test_doctor.py           # Health check logic
-│   ├── test_integration.py      # End-to-end vault init
-│   ├── test_ports.py            # Port allocation + collision prevention
-│   ├── test_settings_merge.py   # Safe JSON merge
-│   ├── test_smoke.py            # Smoke tests (CLI, imports, live vault)
-│   └── test_state.py            # Phase completion tracking
+│   ├── conftest.py               # Shared fixtures (mock Obsidian interactions)
+│   ├── test_cli.py               # CLI argument parsing
+│   ├── test_crypto.py            # API key + bearer token generation
+│   ├── test_doctor.py            # Health check logic
+│   ├── test_integration.py       # End-to-end vault init
+│   ├── test_ports.py             # Port allocation + collision prevention
+│   ├── test_settings_merge.py    # Safe JSON merge
+│   ├── test_smoke.py             # Smoke tests (CLI, imports, live vault)
+│   ├── test_state.py             # Phase completion tracking
+│   └── test_bm25.py              # BM25 search integration (requires Node.js)
 ├── pyproject.toml
 └── README.md
+```
+
+## Development
+
+```bash
+# Clone and set up
+git clone https://github.com/ssanvi-builds/ObsiForge.git
+cd ObsiForge
+uv sync
+
+# Run tests (full suite)
+uv run pytest tests/ -v
+
+# Run tests excluding Node.js-dependent tests
+uv run pytest tests/ -v --ignore=tests/test_bm25.py
+
+# Lint
+uv run ruff check src/
+
+# Type check
+uv run mypy src/
+
+# Try it
+uv run obsiforge init --name test --path /tmp/test-vault --dry-run
 ```
 
 ## Roadmap
@@ -360,6 +479,7 @@ obsiforge/
 - [x] MCP Connector port discovery (actual port, not allocated)
 - [x] Multi-vault doctor with `--vault` selection
 - [x] Dark theme default (appearance.json)
+- [x] LLM provider configuration for claude-mem (Gemini, OpenRouter, Anthropic)
 - [ ] Auto-repair mode (`--fix` actually fixes things)
 - [ ] Test isolation (state file shared with pytest)
 - [ ] Obsidian plugin marketplace integration

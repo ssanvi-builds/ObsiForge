@@ -88,6 +88,11 @@ def init(
         "-a",
         help="Automatically install missing prerequisites.",
     ),
+    gemini_key: str = typer.Option(
+        "",
+        "--gemini-key",
+        help="Gemini API key for claude-mem LLM backend (skips interactive prompt).",
+    ),
 ) -> None:
     """Set up the full 3-layer memory system.
 
@@ -122,6 +127,8 @@ def init(
         non_interactive=non_interactive,
         auto_install=auto_install,
     )
+    if not dry_run:
+        mark_phase_complete("prerequisites")
 
     # Phase 1: claude-mem (global, one-time)
     console.rule("[bold]claude-mem[/bold]")
@@ -130,6 +137,7 @@ def init(
         vault_path=vault_path,
         dry_run=dry_run,
         non_interactive=non_interactive,
+        gemini_key=gemini_key,
     )
     if not dry_run:
         mark_phase_complete("claude_mem")
@@ -320,6 +328,43 @@ def doctor(
 
 
 @app.command()
+def sync() -> None:
+    """Sync MCP credentials for all configured vaults.
+
+    Reads the current bearer token and port from each vault's istefox
+    plugin, discovers the actual MCP port by probing, and updates
+    .mcp.json and the state file if they differ.
+
+    Designed to run as a SessionStart hook so tokens and ports stay
+    current after Obsidian restarts.
+    """
+    from obsiforge.doctor import _fix_mcp_json, _sync_mcp_credentials
+
+    state = load_state()
+    vaults = state.get("vaults", {})
+    if not vaults:
+        return
+
+    synced = 0
+    for name, info in vaults.items():
+        vault_path = info.get("vault_path")
+        if not vault_path:
+            continue
+        creds = _sync_mcp_credentials(vault_path)
+        new_token = creds["bearer_token"]
+        new_port = creds["actual_port"] or creds["config_port"]
+        if not new_token or not new_port:
+            continue
+        if _fix_mcp_json(vault_path, name, new_token, new_port):
+            info["bearer_token"] = new_token
+            info["mcp_http_port"] = new_port
+            synced += 1
+
+    if synced:
+        save_state(state)
+
+
+@app.command()
 def status(
     json_output: bool = typer.Option(
         False,
@@ -338,8 +383,10 @@ def status(
 
     if json_output:
         import json
+        import sys
 
-        console.print(json.dumps(statuses, indent=2))
+        # Use plain print to avoid Rich control characters in JSON output
+        print(json.dumps(statuses, indent=2), file=sys.stdout)
         return
 
     table = Table(title="ObsiForge Status", show_lines=True)
